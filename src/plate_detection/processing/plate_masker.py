@@ -79,6 +79,7 @@ def perspective_transform_mask(
     mask: np.ndarray,
     quad_points: np.ndarray,
     opacity: float = 1.0,
+    padding: float = 0.02,
 ) -> np.ndarray:
     """
     マスク画像を射影変換してプレート位置に合成
@@ -88,6 +89,7 @@ def perspective_transform_mask(
         mask: マスク画像（BGRA）
         quad_points: プレートの4点座標 (4, 2)
         opacity: 透明度（0.0〜1.0）
+        padding: マスクの余白（プレートより少し大きく、0.0〜0.1推奨）
     
     Returns:
         合成後の画像
@@ -95,8 +97,18 @@ def perspective_transform_mask(
     h, w = image.shape[:2]
     mask_h, mask_w = mask.shape[:2]
     
-    # 4点を正しい順序に並べ替え
+    # 4点を正しい順序に並べ替え（左上、右上、右下、左下）
     dst_pts = order_points(quad_points.astype(np.float32))
+    
+    # パディングを適用してマスクを少し大きくする（自然な見た目のため）
+    if padding > 0:
+        # 各点から中心への方向を計算し、外側に拡張
+        center = dst_pts.mean(axis=0)
+        dst_pts_padded = np.zeros_like(dst_pts)
+        for i in range(4):
+            direction = dst_pts[i] - center
+            dst_pts_padded[i] = dst_pts[i] + direction * padding
+        dst_pts = dst_pts_padded
     
     # マスク画像の4点（左上、右上、右下、左下）
     src_pts = np.array([
@@ -109,8 +121,19 @@ def perspective_transform_mask(
     # 射影変換行列を計算
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
     
-    # マスク画像を射影変換
-    warped = cv2.warpPerspective(mask, M, (w, h), flags=cv2.INTER_LINEAR)
+    # マスク画像を射影変換（高品質補間）
+    warped = cv2.warpPerspective(
+        mask, M, (w, h),
+        flags=cv2.INTER_LANCZOS4,  # 高品質補間
+        borderMode=cv2.BORDER_TRANSPARENT
+    )
+    
+    # エッジをスムーズにする（アンチエイリアス効果）
+    if warped.shape[2] == 4:
+        # アルファチャンネルを軽くぼかして自然な境界に
+        alpha = warped[:, :, 3]
+        alpha_blurred = cv2.GaussianBlur(alpha, (3, 3), 0)
+        warped[:, :, 3] = alpha_blurred
     
     # アルファブレンディング
     result = alpha_blend(image, warped, opacity)

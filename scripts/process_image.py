@@ -24,13 +24,14 @@ SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.plate_detection.modeling.predict import PlateDetector
+from src.plate_detection.processing.plate_masker import mask_plate_with_image, load_mask_image
 
 
 # 定数
-FILL_COLOR = (255, 255, 255)  # 白
 ASPECT_RATIO_MIN = 1.0
 ASPECT_RATIO_MAX = 2.5
 BANNER_PATH = Path(__file__).parent.parent / "assets" / "banner_sample.png"
+PLATE_MASK_PATH = Path(__file__).parent.parent / "assets" / "plate_mask.png"
 
 
 def validate_aspect_ratio(polygon: np.ndarray) -> bool:
@@ -166,12 +167,14 @@ def process_image(
         if validate_aspect_ratio(polygon):
             valid_detections.append(det)
     
-    # マスク処理
+    # マスク画像をロード
+    mask_image = load_mask_image(PLATE_MASK_PATH)
+    
+    # マスク処理（plate_mask.png を射影変換して合成）
     result = image.copy()
     for det in valid_detections:
         polygon = det["mask"]
-        quad = polygon_to_quad(polygon)
-        cv2.fillPoly(result, [quad], color=FILL_COLOR)
+        result = mask_plate_with_image(result, polygon, mask_image)
     
     # バナー追加（is_masking=trueの場合）
     if is_masking:
