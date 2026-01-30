@@ -45,14 +45,14 @@ credentials.json
 runs/
 wandb/
 
-# Model weights (keep .gitkeep for folder structure)
-*.pt
+# Model weights
 *.pth
 *.onnx
 *.engine
 *.tflite
 *.mlmodel
-!models/.gitkeep
+# Allow production model
+!models/best.pt
 
 # Checkpoints
 checkpoints/
