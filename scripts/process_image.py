@@ -301,15 +301,18 @@ def main():
   # 単一ファイル処理
   python scripts/process_image.py --input=input.jpg --output=output.jpg
   
-  # フォルダ一括処理
+  # フォルダ一括処理（outputは自動で input/output に作成）
+  python scripts/process_image.py --input=/path/to/images
+  
+  # 出力先を指定
   python scripts/process_image.py --input=/path/to/images --output=/path/to/output
   
   # バナーなし（マスキングのみ）
-  python scripts/process_image.py --input=folder --output=output --is-masking=false
+  python scripts/process_image.py --input=folder --is-masking=false
         """
     )
     parser.add_argument("--input", required=True, help="入力画像パスまたはフォルダ")
-    parser.add_argument("--output", required=True, help="出力画像パスまたはフォルダ")
+    parser.add_argument("--output", help="出力先（省略時: フォルダ→input/output, ファイル→input_masked.jpg）")
     parser.add_argument("--is-masking", type=str, default="true", help="バナー追加 (true/false)")
     parser.add_argument("--model", default="models/best.pt", help="モデルパス")
     parser.add_argument("--confidence", type=float, default=0.1, help="検出信頼度")
@@ -320,7 +323,16 @@ def main():
     is_masking = args.is_masking.lower() in ("true", "1", "yes")
     
     input_path = Path(args.input)
-    output_path = Path(args.output)
+    
+    # 出力先の自動設定
+    if args.output:
+        output_path = Path(args.output)
+    elif input_path.is_dir():
+        # フォルダの場合: input/output に出力
+        output_path = input_path / "output"
+    else:
+        # ファイルの場合: input_masked.ext として出力
+        output_path = input_path.parent / f"{input_path.stem}_masked{input_path.suffix}"
     
     # 入力がフォルダかファイルか判定
     if input_path.is_dir():

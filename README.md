@@ -117,28 +117,35 @@ sudo systemctl start plate-api
 source venv/bin/activate
 
 # === 単一ファイル処理 ===
+python scripts/process_image.py --input=car.jpg
+# → car_masked.jpg に出力
+
 python scripts/process_image.py --input=car.jpg --output=result.jpg
+# → result.jpg に出力
 
 # === フォルダ一括処理 ===
-# outputフォルダは自動作成されます
+python scripts/process_image.py --input=/path/to/images
+# → /path/to/images/output/ に出力（自動作成）
+
 python scripts/process_image.py --input=/path/to/images --output=/path/to/output
+# → /path/to/output/ に出力
 
 # === オプション ===
 # バナーなし（マスキングのみ）
-python scripts/process_image.py --input=folder --output=output --is-masking=false
+python scripts/process_image.py --input=folder --is-masking=false
 
 # 信頼度閾値を変更
-python scripts/process_image.py --input=car.jpg --output=result.jpg --confidence=0.3
+python scripts/process_image.py --input=car.jpg --confidence=0.3
 
 # モデルを指定
-python scripts/process_image.py --input=car.jpg --output=result.jpg --model=models/custom.pt
+python scripts/process_image.py --input=car.jpg --model=models/custom.pt
 ```
 
 **オプション一覧:**
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--input` | (必須) | 入力画像またはフォルダ |
-| `--output` | (必須) | 出力画像またはフォルダ |
+| `--output` | (自動) | 出力先（省略時: フォルダ→`input/output/`, ファイル→`input_masked.jpg`）|
 | `--is-masking` | `true` | バナー追加 (true/false) |
 | `--model` | `models/best.pt` | モデルファイルパス |
 | `--confidence` | `0.1` | 検出信頼度 (0.0~1.0) |
