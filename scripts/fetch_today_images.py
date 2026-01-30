@@ -345,18 +345,27 @@ def backup_and_process(
         logger.error(f"バックアップディレクトリ作成失敗: {backup_dir} - {e}")
         return {"status": "error", "reason": f"mkdir_failed: {e}", "path": full_path}
     
-    # 元画像をバックアップ（既にあれば上書きしない）
-    if not os.path.exists(backup_path):
+    # バックアップ処理
+    # - バックアップが存在する場合: 元画像から復元してから処理（二重処理防止）
+    # - バックアップが存在しない場合: 現在の画像をバックアップ
+    if os.path.exists(backup_path):
+        # バックアップから復元（既に処理済みの可能性があるため）
+        try:
+            logger.debug(f"バックアップから復元: {backup_path}")
+            shutil.copy2(backup_path, full_path)
+        except Exception as e:
+            logger.error(f"復元失敗: {e}")
+            return {"status": "error", "reason": f"restore_failed: {e}", "path": full_path}
+    else:
+        # 初回処理: バックアップ作成
         try:
             logger.debug(f"バックアップ作成: {backup_path}")
             shutil.copy2(full_path, backup_path)
         except Exception as e:
             logger.error(f"バックアップ失敗: {e}")
             return {"status": "error", "reason": f"backup_failed: {e}", "path": full_path}
-    else:
-        logger.debug(f"バックアップ既存: {backup_path}")
     
-    # 処理実行
+    # 処理実行（常に元画像から処理）
     try:
         logger.debug(f"モデル推論開始: is_first={is_first_image}")
         result = process_image(
