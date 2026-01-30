@@ -106,6 +106,97 @@ sudo systemctl enable plate-api
 sudo systemctl start plate-api
 ```
 
+## 🛠️ Scripts Usage
+
+### process_image.py - 画像処理スクリプト
+
+ナンバープレートを検出してマスキング処理を行います。
+
+```bash
+# 仮想環境を有効化
+source venv/bin/activate
+
+# === 単一ファイル処理 ===
+python scripts/process_image.py --input=car.jpg --output=result.jpg
+
+# === フォルダ一括処理 ===
+# outputフォルダは自動作成されます
+python scripts/process_image.py --input=/path/to/images --output=/path/to/output
+
+# === オプション ===
+# バナーなし（マスキングのみ）
+python scripts/process_image.py --input=folder --output=output --is-masking=false
+
+# 信頼度閾値を変更
+python scripts/process_image.py --input=car.jpg --output=result.jpg --confidence=0.3
+
+# モデルを指定
+python scripts/process_image.py --input=car.jpg --output=result.jpg --model=models/custom.pt
+```
+
+**オプション一覧:**
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--input` | (必須) | 入力画像またはフォルダ |
+| `--output` | (必須) | 出力画像またはフォルダ |
+| `--is-masking` | `true` | バナー追加 (true/false) |
+| `--model` | `models/best.pt` | モデルファイルパス |
+| `--confidence` | `0.1` | 検出信頼度 (0.0~1.0) |
+
+---
+
+### fetch_today_images.py - バッチ処理スクリプト
+
+DBから画像を取得し、自動でマスキング処理を行います（crontab用）。
+
+```bash
+# 仮想環境を有効化
+source venv/bin/activate
+
+# === 基本実行 ===
+# 今日の画像、最大10件
+python scripts/fetch_today_images.py
+
+# === 日付指定 ===
+# 昨日の画像
+python scripts/fetch_today_images.py --days-ago 1
+
+# 1週間前の画像
+python scripts/fetch_today_images.py --days-ago 7
+
+# === 処理件数指定 ===
+# 最大50件
+python scripts/fetch_today_images.py --limit 50
+
+# 全件処理（制限なし）
+python scripts/fetch_today_images.py --limit 0
+
+# === 組み合わせ ===
+python scripts/fetch_today_images.py --days-ago 3 --limit 100
+```
+
+**オプション一覧:**
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--days-ago` | `0` | 何日前の画像を処理するか (0=今日) |
+| `--limit` | `10` | 最大処理件数 (0=無制限) |
+
+**crontab設定例:**
+```bash
+# 毎分実行
+* * * * * /home/ec2-user/plate-detection-service/venv/bin/python /home/ec2-user/plate-detection-service/scripts/fetch_today_images.py >> /dev/null 2>&1
+```
+
+**ログファイル:**
+```
+logs/
+├── process.log              # 処理ログ
+└── tracking/
+    └── processed_20260130.json  # 日次トラッキング
+```
+
+---
+
 ## 📡 API Endpoints
 
 | Endpoint | Method | Description |
@@ -138,14 +229,51 @@ curl -X POST "http://localhost:8000/overlay" \
   -F "mask_plate=true"
 ```
 
-## ⚙️ Cấu hình
+## ⚙️ Cấu hình (.env)
 
+```bash
+cp .env.example .env
+vi .env
+```
+
+### API設定
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MODEL_PATH` | `models/best.pt` | Đường dẫn model |
-| `CONFIDENCE_THRESHOLD` | `0.1` | Ngưỡng confidence |
-| `DEVICE` | `cpu` | Device: cpu/cuda |
-| `MAX_FILE_SIZE_MB` | `10` | Max file size |
+| `API_HOST` | `0.0.0.0` | APIホスト |
+| `API_PORT` | `8000` | APIポート |
+| `DEBUG` | `false` | デバッグモード |
+
+### モデル設定
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MODEL_PATH` | `models/best.pt` | モデルファイルパス |
+| `CONFIDENCE_THRESHOLD` | `0.1` | 検出信頼度 (0.0~1.0) |
+| `DEVICE` | `cpu` | デバイス: cpu / cuda / mps |
+| `MAX_FILE_SIZE_MB` | `10` | 最大ファイルサイズ |
+
+### データベース設定 (fetch_today_images.py用)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_HOST` | - | DBホスト |
+| `DB_NAME` | `cartrading` | DB名 |
+| `DB_USER` | - | DBユーザー |
+| `DB_PASSWORD` | - | DBパスワード |
+
+### S3設定
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `S3_MOUNT` | - | S3マウントパス |
+
+### バックアップ設定
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BACKUP_MODE` | `local` | バックアップ先: local / s3 |
+| `BACKUP_DIR` | `/home/ec2-user/backup` | ローカルバックアップ先 |
+
+### ログ設定
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_DIR` | `logs` | ログディレクトリ（相対/絶対パス）|
 
 ## 📦 Files cần thiết
 
