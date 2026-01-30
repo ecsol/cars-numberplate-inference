@@ -1,0 +1,27 @@
+# ======================
+# Inference Dependencies
+# ======================
+# Production only - no training dependencies
+
+# Core ML (inference only)
+ultralytics>=8.3.0
+torch>=2.0.0
+torchvision>=0.15.0
+
+# API Framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+python-multipart>=0.0.6
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Image Processing
+opencv-python-headless>=4.8.0
+pillow>=10.0.0
+numpy>=1.24.0
+
+# Database
+psycopg2-binary>=2.9.0
+
+# OCR (optional - for ocr_check feature)
+# easyocr>=1.7.0

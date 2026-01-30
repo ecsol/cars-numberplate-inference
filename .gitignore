@@ -1,0 +1,181 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+.venv/
+ENV/
+.env.local
+
+# =========================
+# Environment & Secrets
+# =========================
+.env
+.env.*
+!.env.example
+secrets.json
+credentials.json
+
+# =========================
+# YOLO / Machine Learning
+# =========================
+# Training runs
+runs/
+wandb/
+
+# Model weights (keep .gitkeep for folder structure)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.mlmodel
+!models/.gitkeep
+
+# Checkpoints
+checkpoints/
+*.ckpt
+
+# =========================
+# Dataset
+# =========================
+# Raw images (large files)
+data/raw/images/
+data/raw/*.json
+
+# Processed dataset
+data/processed/
+
+# Temporary annotation files
+*.cache
+*.npy
+
+# =========================
+# IDE & Editor
+# =========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.spyderproject
+.spyproject
+
+# Cursor (keep rules, ignore cache)
+.cursor/cache/
+.cursor/logs/
+.cursorignore
+
+# Claude AI
+.claude/
+
+# =========================
+# OS Generated
+# =========================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# =========================
+# Logs & Temp Files
+# =========================
+*.log
+*.tmp
+*.temp
+*.bak
+logs/
+
+# =========================
+# Test & Output Files
+# =========================
+result_*.jpg
+result_*.png
+output_*.jpg
+output_*.png
+test_output/
+*.test.jpg
+
+# Outputs directory (inference results)
+outputs/predictions/*
+outputs/visualizations/*
+!outputs/predictions/.gitkeep
+!outputs/visualizations/.gitkeep
+
+# Reports figures
+reports/figures/*
+!reports/figures/.gitkeep
+
+# =========================
+# Jupyter Notebook
+# =========================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# =========================
+# Coverage & Testing
+# =========================
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# =========================
+# Documentation
+# =========================
+docs/_build/
+site/
+outputs/predictions_v2/*
+!outputs/predictions_v2/.gitkeep
+
+# =========================
+# Test Evidence & Results
+# =========================
+# Test evidence (auto-generated)
+docs/test/evidence/
+!docs/test/evidence/.gitkeep
+docs/test/試験項目書_API.xlsx
+docs/~$*.xlsx
+docs/test/*.zip
+docs/test/untitled*/
+
+# Test images (contains real license plates - privacy)
+docs/test/images/
+!docs/test/images/.gitkeep
+
+# Old test images folder (deprecated, use docs/test/images/)
+test_images/
