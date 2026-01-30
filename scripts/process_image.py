@@ -3,7 +3,11 @@
 ナンバープレート検出・マスキング処理スクリプト
 
 Usage:
+    # 単一ファイル処理
     python scripts/process_image.py --input=input.jpg --output=output.jpg --is-masking=true
+    
+    # フォルダ一括処理（outputフォルダは自動作成）
+    python scripts/process_image.py --input=/path/to/folder --output=/path/to/output
 """
 
 import argparse
@@ -12,6 +16,9 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+
+# サポートする画像拡張子
+SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -187,10 +194,122 @@ def process_image(
     }
 
 
+def get_image_files(folder: Path) -> list[Path]:
+    """
+    フォルダ内の画像ファイルを取得
+    
+    Args:
+        folder: 検索対象フォルダ
+    
+    Returns:
+        画像ファイルパスのリスト
+    """
+    images = []
+    for ext in SUPPORTED_EXTENSIONS:
+        images.extend(folder.glob(f"*{ext}"))
+        images.extend(folder.glob(f"*{ext.upper()}"))
+    return sorted(set(images))
+
+
+def process_batch(
+    input_folder: Path,
+    output_folder: Path,
+    is_masking: bool,
+    model_path: str,
+    confidence: float,
+) -> dict:
+    """
+    フォルダ内の画像を一括処理
+    
+    Args:
+        input_folder: 入力フォルダ
+        output_folder: 出力フォルダ
+        is_masking: バナー追加フラグ
+        model_path: モデルパス
+        confidence: 検出信頼度
+    
+    Returns:
+        処理結果サマリー
+    """
+    # 画像ファイル取得
+    images = get_image_files(input_folder)
+    
+    if not images:
+        print(f"画像が見つかりません: {input_folder}")
+        return {"total": 0, "success": 0, "failed": 0}
+    
+    # 出力フォルダ作成
+    output_folder.mkdir(parents=True, exist_ok=True)
+    
+    print(f"=" * 60)
+    print(f"バッチ処理開始")
+    print(f"  入力: {input_folder}")
+    print(f"  出力: {output_folder}")
+    print(f"  画像数: {len(images)}枚")
+    print(f"  バナー: {'あり' if is_masking else 'なし'}")
+    print(f"=" * 60)
+    
+    success = 0
+    failed = 0
+    total_detections = 0
+    
+    for i, img_path in enumerate(images, 1):
+        output_path = output_folder / img_path.name
+        
+        try:
+            result = process_image(
+                input_path=str(img_path),
+                output_path=str(output_path),
+                is_masking=is_masking,
+                model_path=model_path,
+                confidence=confidence,
+            )
+            
+            success += 1
+            total_detections += result["detections"]
+            status = f"検出: {result['detections']}"
+            
+        except Exception as e:
+            failed += 1
+            status = f"エラー: {e}"
+        
+        # 進捗表示
+        print(f"[{i}/{len(images)}] {img_path.name} - {status}")
+    
+    # サマリー
+    print(f"=" * 60)
+    print(f"処理完了")
+    print(f"  成功: {success}枚")
+    print(f"  失敗: {failed}枚")
+    print(f"  総検出数: {total_detections}")
+    print(f"=" * 60)
+    
+    return {
+        "total": len(images),
+        "success": success,
+        "failed": failed,
+        "detections": total_detections,
+    }
+
+
 def main():
-    parser = argparse.ArgumentParser(description="ナンバープレート検出・マスキング")
-    parser.add_argument("--input", required=True, help="入力画像パス")
-    parser.add_argument("--output", required=True, help="出力画像パス")
+    parser = argparse.ArgumentParser(
+        description="ナンバープレート検出・マスキング",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用例:
+  # 単一ファイル処理
+  python scripts/process_image.py --input=input.jpg --output=output.jpg
+  
+  # フォルダ一括処理
+  python scripts/process_image.py --input=/path/to/images --output=/path/to/output
+  
+  # バナーなし（マスキングのみ）
+  python scripts/process_image.py --input=folder --output=output --is-masking=false
+        """
+    )
+    parser.add_argument("--input", required=True, help="入力画像パスまたはフォルダ")
+    parser.add_argument("--output", required=True, help="出力画像パスまたはフォルダ")
     parser.add_argument("--is-masking", type=str, default="true", help="バナー追加 (true/false)")
     parser.add_argument("--model", default="models/best.pt", help="モデルパス")
     parser.add_argument("--confidence", type=float, default=0.1, help="検出信頼度")
@@ -200,25 +319,56 @@ def main():
     # is-masking を bool に変換
     is_masking = args.is_masking.lower() in ("true", "1", "yes")
     
-    try:
-        result = process_image(
-            input_path=args.input,
-            output_path=args.output,
-            is_masking=is_masking,
-            model_path=args.model,
-            confidence=args.confidence,
-        )
-        
-        print(f"処理完了:")
-        print(f"  入力: {result['input']}")
-        print(f"  出力: {result['output']}")
-        print(f"  サイズ: {result['original_size'][0]}x{result['original_size'][1]}")
-        print(f"  検出数: {result['detections']}")
-        print(f"  バナー: {'あり' if result['is_masking'] else 'なし'}")
-        
-    except Exception as e:
-        print(f"エラー: {e}", file=sys.stderr)
-        sys.exit(1)
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    
+    # 入力がフォルダかファイルか判定
+    if input_path.is_dir():
+        # フォルダ処理
+        try:
+            result = process_batch(
+                input_folder=input_path,
+                output_folder=output_path,
+                is_masking=is_masking,
+                model_path=args.model,
+                confidence=args.confidence,
+            )
+            
+            if result["failed"] > 0:
+                sys.exit(1)
+                
+        except Exception as e:
+            print(f"エラー: {e}", file=sys.stderr)
+            sys.exit(1)
+    else:
+        # 単一ファイル処理
+        try:
+            # 出力先がフォルダの場合、ファイル名を追加
+            if output_path.is_dir() or (not output_path.suffix and not output_path.exists()):
+                output_path.mkdir(parents=True, exist_ok=True)
+                output_path = output_path / input_path.name
+            else:
+                # 出力ファイルの親フォルダを作成
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            result = process_image(
+                input_path=str(input_path),
+                output_path=str(output_path),
+                is_masking=is_masking,
+                model_path=args.model,
+                confidence=args.confidence,
+            )
+            
+            print(f"処理完了:")
+            print(f"  入力: {result['input']}")
+            print(f"  出力: {result['output']}")
+            print(f"  サイズ: {result['original_size'][0]}x{result['original_size'][1]}")
+            print(f"  検出数: {result['detections']}")
+            print(f"  バナー: {'あり' if result['is_masking'] else 'なし'}")
+            
+        except Exception as e:
+            print(f"エラー: {e}", file=sys.stderr)
+            sys.exit(1)
 
 
 if __name__ == "__main__":

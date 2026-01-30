@@ -65,7 +65,15 @@ DB_CONFIG = {
 
 S3_MOUNT = os.getenv("S3_MOUNT", "")
 MODEL_PATH = os.getenv("MODEL_PATH", str(PROJECT_DIR / "models" / "best.pt"))
-LOG_DIR = Path(os.getenv("LOG_DIR", "/var/log/plate-detection"))
+
+# ログディレクトリ（デフォルト: プロジェクトフォルダ内 logs/）
+_log_dir_env = os.getenv("LOG_DIR", "")
+if _log_dir_env:
+    LOG_DIR = Path(_log_dir_env)
+    if not LOG_DIR.is_absolute():
+        LOG_DIR = PROJECT_DIR / _log_dir_env
+else:
+    LOG_DIR = PROJECT_DIR / "logs"
 LOG_FILE = LOG_DIR / "process.log"
 
 # バックアップ設定
