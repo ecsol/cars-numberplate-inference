@@ -68,8 +68,10 @@ MODEL_PATH = os.getenv("MODEL_PATH", str(PROJECT_DIR / "models" / "best.pt"))
 LOG_DIR = Path(os.getenv("LOG_DIR", "/var/log/plate-detection"))
 LOG_FILE = LOG_DIR / "process.log"
 
-# バックアップディレクトリ（S3に書き込めない場合はローカルに保存）
-BACKUP_DIR = os.getenv("BACKUP_DIR", "")
+# バックアップ設定
+# BACKUP_MODE: "local" = ローカルに保存, "s3" = S3上に.backupフォルダ作成
+BACKUP_MODE = os.getenv("BACKUP_MODE", "local")
+BACKUP_DIR = os.getenv("BACKUP_DIR", "/home/ec2-user/backup")
 
 
 # ======================
@@ -322,15 +324,15 @@ def backup_and_process(
         logger.warn(f"ファイル未検出: {full_path}")
         return {"status": "skip", "reason": "file_not_found", "path": full_path}
     
-    # バックアップディレクトリ（BACKUP_DIRが設定されていればローカル、なければS3上）
+    # バックアップディレクトリ
     file_name = os.path.basename(full_path)
     relative_dir = os.path.dirname(file_path.lstrip("/"))
     
-    if BACKUP_DIR:
+    if BACKUP_MODE == "local":
         # ローカルバックアップ（S3が書き込み不可の場合）
         backup_dir = os.path.join(BACKUP_DIR, relative_dir)
     else:
-        # S3上にバックアップ（従来の動作）
+        # S3上にバックアップ（BACKUP_MODE="s3"）
         file_dir = os.path.dirname(full_path)
         backup_dir = os.path.join(file_dir, ".backup")
     
