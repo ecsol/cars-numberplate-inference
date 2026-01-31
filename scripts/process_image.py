@@ -119,11 +119,23 @@ def polygon_to_quad(polygon: np.ndarray) -> np.ndarray:
     return approx
 
 
-def add_banner_overlay(image: np.ndarray, banner_path: Path) -> np.ndarray:
+def add_banner_overlay(
+    image: np.ndarray,
+    banner_path: Path,
+    alpha_channel: np.ndarray = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """
     バナーを画像下部にオーバーレイ（画像サイズ変更なし）
     
     元画像の上にバナーを直接重ねる。画像サイズは維持。
+    
+    Args:
+        image: BGR画像
+        banner_path: バナー画像パス
+        alpha_channel: 元画像のアルファチャンネル（あれば）
+    
+    Returns:
+        (結果画像, 更新されたアルファチャンネル)
     """
     img_h, img_w = image.shape[:2]
     
@@ -131,7 +143,7 @@ def add_banner_overlay(image: np.ndarray, banner_path: Path) -> np.ndarray:
     banner = cv2.imread(str(banner_path), cv2.IMREAD_UNCHANGED)
     if banner is None:
         print(f"Warning: Banner not found: {banner_path}")
-        return image
+        return image, alpha_channel
     
     # バナーを画像幅にリサイズ
     banner_h, banner_w = banner.shape[:2]
@@ -162,7 +174,12 @@ def add_banner_overlay(image: np.ndarray, banner_path: Path) -> np.ndarray:
     else:
         result[banner_y:img_h, :, :] = banner_resized[:, :, :3]
     
-    return result
+    # アルファチャンネルがある場合、バナー領域を不透明に
+    if alpha_channel is not None:
+        alpha_channel = alpha_channel.copy()
+        alpha_channel[banner_y:img_h, :] = 255  # バナー部分は完全不透明
+    
+    return result, alpha_channel
 
 
 def process_image(
@@ -236,7 +253,7 @@ def process_image(
     
     # バナー追加（is_masking=trueの場合）
     if is_masking:
-        result = add_banner_overlay(result, BANNER_PATH)
+        result, alpha_channel = add_banner_overlay(result, BANNER_PATH, alpha_channel)
     
     # サイズ確認（元サイズを維持）
     result_h, result_w = result.shape[:2]
