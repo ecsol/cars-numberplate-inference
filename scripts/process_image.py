@@ -130,12 +130,22 @@ def process_image(
     Returns:
         処理結果情報
     """
-    # 画像読み込み
-    image = cv2.imread(input_path)
-    if image is None:
+    # 画像読み込み（UNCHANGED でアルファチャンネルを保持）
+    image_raw = cv2.imread(input_path, cv2.IMREAD_UNCHANGED)
+    if image_raw is None:
         raise ValueError(f"画像を読み込めません: {input_path}")
     
-    original_h, original_w = image.shape[:2]
+    original_h, original_w = image_raw.shape[:2]
+    
+    # アルファチャンネルを分離（存在する場合）
+    has_alpha = len(image_raw.shape) == 3 and image_raw.shape[2] == 4
+    if has_alpha:
+        # BGRA → BGR + Alpha
+        image = image_raw[:, :, :3]
+        alpha_channel = image_raw[:, :, 3]
+    else:
+        image = image_raw
+        alpha_channel = None
     
     # モデルロード
     detector = PlateDetector(
@@ -171,12 +181,23 @@ def process_image(
     result_h, result_w = result.shape[:2]
     if result_h != original_h or result_w != original_w:
         result = cv2.resize(result, (original_w, original_h), interpolation=cv2.INTER_AREA)
+        # アルファチャンネルもリサイズ
+        if alpha_channel is not None:
+            alpha_channel = cv2.resize(alpha_channel, (original_w, original_h), interpolation=cv2.INTER_AREA)
+    
+    # アルファチャンネルを復元（PNG出力の場合）
+    output_ext = Path(output_path).suffix.lower()
+    if has_alpha and output_ext == ".png":
+        # BGR + Alpha → BGRA
+        result = cv2.merge([result[:, :, 0], result[:, :, 1], result[:, :, 2], alpha_channel])
     
     # 保存（高品質）
     # JPEG: quality=98 でノイズを最小化
-    # PNG: 圧縮レベル=3（デフォルト）
-    output_ext = Path(output_path).suffix.lower()
+    # PNG: 圧縮レベル=3（デフォルト）、アルファチャンネル保持
     if output_ext in [".jpg", ".jpeg"]:
+        # JPEGはアルファ非対応なので、アルファがある場合はBGRに変換
+        if len(result.shape) == 3 and result.shape[2] == 4:
+            result = result[:, :, :3]
         cv2.imwrite(output_path, result, [cv2.IMWRITE_JPEG_QUALITY, 98])
     elif output_ext == ".png":
         cv2.imwrite(output_path, result, [cv2.IMWRITE_PNG_COMPRESSION, 3])
