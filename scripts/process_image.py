@@ -16,9 +16,64 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from PIL import Image
+from PIL.ExifTags import TAGS
 
 # サポートする画像拡張子
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+
+
+def get_exif_orientation(image_path: str) -> int:
+    """
+    画像のEXIF Orientationを取得
+    
+    Args:
+        image_path: 画像パス
+    
+    Returns:
+        Orientation値 (1-8)、取得できない場合は1
+    """
+    try:
+        img = Image.open(image_path)
+        exif = img._getexif()
+        if exif:
+            for tag_id, value in exif.items():
+                tag = TAGS.get(tag_id, tag_id)
+                if tag == "Orientation":
+                    return value
+    except Exception:
+        pass
+    return 1  # デフォルト: 回転なし
+
+
+def apply_exif_orientation(image: np.ndarray, orientation: int) -> np.ndarray:
+    """
+    EXIF Orientationに基づいて画像を回転
+    
+    Args:
+        image: OpenCV画像 (BGR/BGRA)
+        orientation: EXIF Orientation値 (1-8)
+    
+    Returns:
+        回転後の画像
+    """
+    if orientation == 1:
+        return image  # 回転なし
+    elif orientation == 2:
+        return cv2.flip(image, 1)  # 水平反転
+    elif orientation == 3:
+        return cv2.rotate(image, cv2.ROTATE_180)  # 180度回転
+    elif orientation == 4:
+        return cv2.flip(image, 0)  # 垂直反転
+    elif orientation == 5:
+        return cv2.flip(cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE), 1)
+    elif orientation == 6:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)  # 90度時計回り
+    elif orientation == 7:
+        return cv2.flip(cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE), 1)
+    elif orientation == 8:
+        return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)  # 90度反時計回り
+    return image
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -130,10 +185,16 @@ def process_image(
     Returns:
         処理結果情報
     """
+    # EXIF Orientation を取得（OpenCVで読む前に）
+    exif_orientation = get_exif_orientation(input_path)
+    
     # 画像読み込み（UNCHANGED でアルファチャンネルを保持）
     image_raw = cv2.imread(input_path, cv2.IMREAD_UNCHANGED)
     if image_raw is None:
         raise ValueError(f"画像を読み込めません: {input_path}")
+    
+    # EXIF Orientation を適用（正しい向きに回転）
+    image_raw = apply_exif_orientation(image_raw, exif_orientation)
     
     original_h, original_w = image_raw.shape[:2]
     
