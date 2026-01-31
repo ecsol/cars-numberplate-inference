@@ -64,11 +64,11 @@ def polygon_to_quad(polygon: np.ndarray) -> np.ndarray:
     return approx
 
 
-def add_banner_fit(image: np.ndarray, banner_path: Path) -> np.ndarray:
+def add_banner_overlay(image: np.ndarray, banner_path: Path) -> np.ndarray:
     """
-    バナーを画像下部に追加（画像サイズ維持、fitモード）
+    バナーを画像下部にオーバーレイ（画像サイズ変更なし）
     
-    画像を縮小してバナーを下部に配置。元のサイズを維持。
+    元画像の上にバナーを直接重ねる。画像サイズは維持。
     """
     img_h, img_w = image.shape[:2]
     
@@ -82,32 +82,19 @@ def add_banner_fit(image: np.ndarray, banner_path: Path) -> np.ndarray:
     banner_h, banner_w = banner.shape[:2]
     scale = img_w / banner_w
     new_banner_h = int(banner_h * scale)
+    
+    # バナーが画像の1/4より大きい場合は縮小
+    max_banner_h = img_h // 4
+    if new_banner_h > max_banner_h:
+        scale = max_banner_h / banner_h
+        new_banner_h = max_banner_h
+    
     banner_resized = cv2.resize(banner, (img_w, new_banner_h), interpolation=cv2.INTER_AREA)
     
-    # 画像を縮小するスペースを計算
-    available_h = img_h - new_banner_h
-    if available_h <= 0:
-        # バナーが大きすぎる場合、バナーを縮小
-        new_banner_h = img_h // 4
-        banner_resized = cv2.resize(banner, (img_w, new_banner_h), interpolation=cv2.INTER_AREA)
-        available_h = img_h - new_banner_h
+    # 結果画像（元画像をコピー）
+    result = image.copy()
     
-    # 画像を縮小
-    img_scale = available_h / img_h
-    new_img_w = int(img_w * img_scale)
-    new_img_h = int(img_h * img_scale)
-    
-    image_resized = cv2.resize(image, (new_img_w, new_img_h), interpolation=cv2.INTER_AREA)
-    
-    # 結果画像を作成（元サイズ維持）
-    result = np.full((img_h, img_w, 3), 255, dtype=np.uint8)  # 白背景
-    
-    # 縮小画像を中央上部に配置
-    x_offset = (img_w - new_img_w) // 2
-    y_offset = 0
-    result[y_offset:y_offset + new_img_h, x_offset:x_offset + new_img_w] = image_resized
-    
-    # バナーを下部に配置
+    # バナーを下部にオーバーレイ
     banner_y = img_h - new_banner_h
     
     # バナーがBGRAの場合、アルファブレンド
@@ -178,15 +165,23 @@ def process_image(
     
     # バナー追加（is_masking=trueの場合）
     if is_masking:
-        result = add_banner_fit(result, BANNER_PATH)
+        result = add_banner_overlay(result, BANNER_PATH)
     
     # サイズ確認（元サイズを維持）
     result_h, result_w = result.shape[:2]
     if result_h != original_h or result_w != original_w:
         result = cv2.resize(result, (original_w, original_h), interpolation=cv2.INTER_AREA)
     
-    # 保存
-    cv2.imwrite(output_path, result)
+    # 保存（高品質）
+    # JPEG: quality=98 でノイズを最小化
+    # PNG: 圧縮レベル=3（デフォルト）
+    output_ext = Path(output_path).suffix.lower()
+    if output_ext in [".jpg", ".jpeg"]:
+        cv2.imwrite(output_path, result, [cv2.IMWRITE_JPEG_QUALITY, 98])
+    elif output_ext == ".png":
+        cv2.imwrite(output_path, result, [cv2.IMWRITE_PNG_COMPRESSION, 3])
+    else:
+        cv2.imwrite(output_path, result)
     
     return {
         "input": input_path,

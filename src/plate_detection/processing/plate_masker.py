@@ -121,19 +121,15 @@ def perspective_transform_mask(
     # 射影変換行列を計算
     M = cv2.getPerspectiveTransform(src_pts, dst_pts)
     
-    # マスク画像を射影変換（高品質補間）
+    # マスク画像を射影変換
+    # INTER_LINEAR: ノイズが少なく安定（LANCZOS4はringingが発生する可能性）
+    # BORDER_CONSTANT: 透明な境界
     warped = cv2.warpPerspective(
         mask, M, (w, h),
-        flags=cv2.INTER_LANCZOS4,  # 高品質補間
-        borderMode=cv2.BORDER_TRANSPARENT
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(0, 0, 0, 0)
     )
-    
-    # エッジをスムーズにする（アンチエイリアス効果）
-    if warped.shape[2] == 4:
-        # アルファチャンネルを軽くぼかして自然な境界に
-        alpha = warped[:, :, 3]
-        alpha_blurred = cv2.GaussianBlur(alpha, (3, 3), 0)
-        warped[:, :, 3] = alpha_blurred
     
     # アルファブレンディング
     result = alpha_blend(image, warped, opacity)
