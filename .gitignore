@@ -179,3 +179,7 @@ docs/test/images/
 
 # Old test images folder (deprecated, use docs/test/images/)
 test_images/
+
+# Large files
+*.zip
+training/data/processed/train/Archive.zip
