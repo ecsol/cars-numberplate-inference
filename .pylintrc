@@ -1,0 +1,28 @@
+[MESSAGES CONTROL]
+disable=
+    C,R,
+    no-member,
+    import-error,
+    missing-function-docstring,
+    missing-method-docstring,
+    missing-class-docstring,
+    too-many-arguments,
+    too-few-public-methods,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    broad-exception-caught,
+    global-statement,
+    protected-access,
+    unused-variable,
+    line-too-long,
+    duplicate-code,
+    too-many-function-args,
+    wrong-import-position
+
+[TYPECHECK]
+ignored-modules=cv2,numpy,torch,ultralytics
+generated-members=cv2.*,numpy.*,torch.*
+
+[FORMAT]
+max-line-length=120

@@ -46,13 +46,16 @@ runs/
 wandb/
 
 # Model weights
+*.pt
 *.pth
 *.onnx
 *.engine
 *.tflite
 *.mlmodel
-# Allow production model
+# Allow production models
 !models/best.pt
+!models/best_yolo26x_lambda_20260201.pt
+!models/yolo26x_pose_best.pt
 
 # Checkpoints
 checkpoints/

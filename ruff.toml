@@ -1,0 +1,8 @@
+[lint]
+# E402: Module level import not at top of file (cần cho sys.path setup)
+# D102: Missing docstring in public method (methods đơn giản không cần)
+# D103: Missing docstring in public function
+ignore = ["E402", "D102", "D103"]
+
+[lint.per-file-ignores]
+"scripts/*.py" = ["E402"]
