@@ -40,7 +40,7 @@ def load_env_file():
     """環境変数ファイルを読み込み"""
     env_file = PROJECT_DIR / ".env"
     if env_file.exists():
-        with open(env_file, encoding="utf-8") as f:
+        with open(env_file) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -51,7 +51,7 @@ def load_env_file():
 
 load_env_file()
 
-from scripts.process_image import process_image  # pylint: disable=wrong-import-position
+from scripts.process_image_v2 import process_image
 
 # ======================
 # 設定
@@ -64,7 +64,17 @@ DB_CONFIG = {
 }
 
 S3_MOUNT = os.getenv("S3_MOUNT", "")
-MODEL_PATH = os.getenv("MODEL_PATH", str(PROJECT_DIR / "models" / "best.pt"))
+
+# Two-Stage モデルパス
+SEG_MODEL_PATH = os.getenv(
+    "SEG_MODEL_PATH", str(PROJECT_DIR / "models" / "best_yolo26x_lambda_20260201.pt")
+)
+POSE_MODEL_PATH = os.getenv(
+    "POSE_MODEL_PATH", str(PROJECT_DIR / "models" / "yolo26x_pose_best.pt")
+)
+PLATE_MASK_PATH = os.getenv(
+    "PLATE_MASK_PATH", str(PROJECT_DIR / "assets" / "plate_mask.png")
+)
 
 # ログディレクトリ（デフォルト: プロジェクトフォルダ内 logs/）
 _log_dir_env = os.getenv("LOG_DIR", "")
@@ -77,9 +87,7 @@ else:
 LOG_FILE = LOG_DIR / "process.log"
 
 # バックアップ設定
-# BACKUP_MODE: "local" = ローカルに保存, "s3" = S3上に.backupフォルダ作成
-BACKUP_MODE = os.getenv("BACKUP_MODE", "local")
-BACKUP_DIR = os.getenv("BACKUP_DIR", "/home/ec2-user/backup")
+# S3上の同じフォルダに.backupを作成
 
 
 # ======================
@@ -106,7 +114,7 @@ class Logger:
         try:
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(log_line + "\n")
-        except OSError:
+        except Exception:
             pass
 
     def info(self, message: str):
@@ -127,6 +135,9 @@ class Logger:
 
 logger = Logger(LOG_FILE)
 
+# ログローテーション設定
+LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "60"))
+
 
 # ======================
 # トラッキング
@@ -136,7 +147,7 @@ class ProcessingTracker:
     処理済みファイルのトラッキング
 
     日付ごとにJSONファイルで管理:
-    /var/log/plate-detection/tracking/processed_20260130.json
+    {PROJECT_DIR}/logs/tracking/processed_20260130.json
 
     形式:
     {
@@ -182,7 +193,7 @@ class ProcessingTracker:
         try:
             with open(tracking_file, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
+        except Exception as e:
             logger.error(f"トラッキングファイル読み込み失敗: {e}")
             return {
                 "date": target_date.isoformat(),
@@ -198,7 +209,7 @@ class ProcessingTracker:
         try:
             with open(tracking_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-        except OSError as e:
+        except Exception as e:
             logger.error(f"トラッキングファイル保存失敗: {e}")
 
     def is_processed(self, target_date: datetime.date, file_id: int) -> bool:
@@ -253,55 +264,163 @@ class ProcessingTracker:
 
         return stats
 
+    def get_last_processed_time(self, target_date: datetime.date) -> Optional[datetime]:
+        """最後に処理した時刻を取得"""
+        data = self.load(target_date)
+        last_time_str = data.get("last_processed_time")
+        if last_time_str:
+            try:
+                return datetime.fromisoformat(last_time_str)
+            except ValueError:
+                return None
+        return None
+
+    def set_last_processed_time(self, target_date: datetime.date, last_time: datetime):
+        """最後に処理した時刻を保存"""
+        data = self.load(target_date)
+        data["last_processed_time"] = last_time.isoformat()
+        self.save(target_date, data)
+
+    def cleanup_old_files(self, retention_days: int = 60):
+        """古いトラッキングファイルを削除"""
+        if not self.tracking_dir.exists():
+            return
+
+        cutoff_date = datetime.now().date() - timedelta(days=retention_days)
+        deleted_count = 0
+
+        for file_path in self.tracking_dir.glob("processed_*.json"):
+            try:
+                # ファイル名から日付を抽出: processed_20260130.json
+                date_str = file_path.stem.replace("processed_", "")
+                file_date = datetime.strptime(date_str, "%Y%m%d").date()
+
+                if file_date < cutoff_date:
+                    file_path.unlink()
+                    deleted_count += 1
+                    logger.debug(f"トラッキングファイル削除: {file_path.name}")
+            except (ValueError, OSError) as e:
+                logger.debug(f"ファイル処理スキップ: {file_path.name} - {e}")
+
+        if deleted_count > 0:
+            logger.info(
+                f"トラッキングローテーション: {deleted_count}件削除 ({retention_days}日以前)"
+            )
+
 
 tracker = ProcessingTracker(LOG_DIR)
 
 
 # ======================
+# モデル・マスク読み込み（グローバル - 起動時に1回のみ）
+# ======================
+seg_model = None
+pose_model = None
+mask_image = None
+
+
+def load_models():
+    """モデルとマスク画像を読み込み（初回のみ）"""
+    global seg_model, pose_model, mask_image
+
+    if seg_model is None:
+        from ultralytics import YOLO
+
+        logger.info(f"Segモデル読み込み: {SEG_MODEL_PATH}")
+        seg_model = YOLO(SEG_MODEL_PATH)
+
+    if pose_model is None:
+        from ultralytics import YOLO
+
+        logger.info(f"Poseモデル読み込み: {POSE_MODEL_PATH}")
+        pose_model = YOLO(POSE_MODEL_PATH)
+
+    if mask_image is None:
+        import cv2
+
+        logger.info(f"マスク画像読み込み: {PLATE_MASK_PATH}")
+        mask_image = cv2.imread(PLATE_MASK_PATH, cv2.IMREAD_UNCHANGED)
+        if mask_image is None:
+            raise ValueError(f"マスク画像を読み込めません: {PLATE_MASK_PATH}")
+
+    return seg_model, pose_model, mask_image
+
+
+# ======================
 # データベース
 # ======================
-def get_images_by_date(days_ago: int = 0) -> list:
+def get_images_by_date(
+    days_ago: int = 0, last_processed_time: Optional[datetime] = None
+) -> list:
     """
     指定日に作成/更新された画像を取得
 
     Args:
         days_ago: 何日前の画像を取得するか (0=今日, 1=昨日, ...)
+        last_processed_time: この時刻以降に作成/更新された画像のみ取得（増分取得）
 
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
     """
     target_date = datetime.now().date() - timedelta(days=days_ago)
 
-    query = """
-        SELECT 
-            id,
-            car_cd,
-            inspresultdata_cd,
-            branch_no,
-            save_file_name,
-            created,
-            modified
-        FROM upload_files
-        WHERE (DATE(created) = %s OR DATE(modified) = %s)
-          AND delete_flg = 0
-          AND save_file_name IS NOT NULL
-          AND save_file_name != ''
-        ORDER BY 
-            COALESCE(inspresultdata_cd, car_cd::text),
-            branch_no ASC
-    """
+    # 増分取得: last_processed_time以降のみ
+    if last_processed_time:
+        query = """
+            SELECT 
+                id,
+                car_cd,
+                inspresultdata_cd,
+                branch_no,
+                save_file_name,
+                created,
+                modified
+            FROM upload_files
+            WHERE (DATE(created) = %s OR DATE(modified) = %s)
+              AND (created > %s OR modified > %s)
+              AND delete_flg = 0
+              AND save_file_name IS NOT NULL
+              AND save_file_name != ''
+            ORDER BY 
+                COALESCE(inspresultdata_cd, car_cd::text),
+                branch_no ASC
+        """
+        params = (target_date, target_date, last_processed_time, last_processed_time)
+    else:
+        # 初回: 全件取得
+        query = """
+            SELECT 
+                id,
+                car_cd,
+                inspresultdata_cd,
+                branch_no,
+                save_file_name,
+                created,
+                modified
+            FROM upload_files
+            WHERE (DATE(created) = %s OR DATE(modified) = %s)
+              AND delete_flg = 0
+              AND save_file_name IS NOT NULL
+              AND save_file_name != ''
+            ORDER BY 
+                COALESCE(inspresultdata_cd, car_cd::text),
+                branch_no ASC
+        """
+        params = (target_date, target_date)
 
     try:
         logger.debug(f"DB接続: {DB_CONFIG['host']}")
+        if last_processed_time:
+            logger.debug(f"増分取得: {last_processed_time} 以降")
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        cur.execute(query, (target_date, target_date))
+        cur.execute(query, params)
         rows = cur.fetchall()
         cur.close()
         conn.close()
         logger.debug(f"DB取得完了: {len(rows)}件")
         return rows
-    except psycopg2.Error as e:
+    except Exception as e:
         logger.error(f"DB接続失敗: {e}")
         return []
 
@@ -315,6 +434,11 @@ def backup_and_process(
 ) -> dict:
     """
     画像をバックアップして処理
+
+    シンプルなバックアップロジック:
+    1. .backupフォルダがなければ作成し、元画像をバックアップ
+    2. .backupに既にファイルがあればスキップ（バックアップ済み）
+    3. 処理実行
 
     Args:
         file_path: S3上のファイルパス (例: /upfile/1007/4856/20220824190333_1.jpg)
@@ -332,36 +456,21 @@ def backup_and_process(
         logger.warn(f"ファイル未検出: {full_path}")
         return {"status": "skip", "reason": "file_not_found", "path": full_path}
 
-    # バックアップディレクトリ
+    # バックアップパス（S3上の同じフォルダに.backup）
     file_name = os.path.basename(full_path)
-    relative_dir = os.path.dirname(file_path.lstrip("/"))
-
-    if BACKUP_MODE == "local":
-        # ローカルバックアップ（S3が書き込み不可の場合）
-        backup_dir = os.path.join(BACKUP_DIR, relative_dir)
-    else:
-        # S3上にバックアップ（BACKUP_MODE="s3"）
-        file_dir = os.path.dirname(full_path)
-        backup_dir = os.path.join(file_dir, ".backup")
-
+    file_dir = os.path.dirname(full_path)
+    backup_dir = os.path.join(file_dir, ".backup")
     backup_path = os.path.join(backup_dir, file_name)
 
-    # バックアップディレクトリ作成
-    try:
-        os.makedirs(backup_dir, exist_ok=True)
-    except OSError as e:
-        logger.error(f"バックアップディレクトリ作成失敗: {backup_dir} - {e}")
-        return {"status": "error", "reason": f"mkdir_failed: {e}", "path": full_path}
-
     # バックアップ処理
-    # - バックアップが存在する場合: 元画像から復元してから処理（二重処理防止）
-    # - バックアップが存在しない場合: 現在の画像をバックアップ
+    # - バックアップが存在する場合: バックアップから復元して処理（二重処理防止）
+    # - バックアップが存在しない場合: 現在の画像をバックアップしてから処理
     if os.path.exists(backup_path):
-        # バックアップから復元（既に処理済みの可能性があるため）
+        # バックアップから復元（常にオリジナルから処理するため）
         try:
             logger.debug(f"バックアップから復元: {backup_path}")
             shutil.copy2(backup_path, full_path)
-        except OSError as e:
+        except Exception as e:
             logger.error(f"復元失敗: {e}")
             return {
                 "status": "error",
@@ -369,11 +478,12 @@ def backup_and_process(
                 "path": full_path,
             }
     else:
-        # 初回処理: バックアップ作成
+        # 初回: バックアップ作成
         try:
+            os.makedirs(backup_dir, exist_ok=True)
             logger.debug(f"バックアップ作成: {backup_path}")
             shutil.copy2(full_path, backup_path)
-        except OSError as e:
+        except Exception as e:
             logger.error(f"バックアップ失敗: {e}")
             return {
                 "status": "error",
@@ -381,29 +491,63 @@ def backup_and_process(
                 "path": full_path,
             }
 
-    # 処理実行（常に元画像から処理）
+    # 処理実行（Two-Stage: Seg + Pose）
     try:
-        logger.debug(f"モデル推論開始: is_first={is_first_image}")
+        logger.debug(f"Two-Stage推論開始: is_first={is_first_image}")
         result = process_image(
             input_path=full_path,
             output_path=full_path,
+            seg_model=seg_model,
+            pose_model=pose_model,
+            mask_image=mask_image,
             is_masking=is_first_image,
-            model_path=MODEL_PATH,
-            confidence=0.1,
         )
         result["status"] = "success"
         result["backup_path"] = backup_path
         logger.debug(f"処理完了: 検出数={result.get('detections', 0)}")
         return result
-    except (OSError, ValueError) as e:
+    except Exception as e:
         logger.error(f"処理失敗: {e}")
-        # エラー時はバックアップから復元
+        return {"status": "error", "reason": str(e), "path": full_path}
+
+
+# ======================
+# ログローテーション
+# ======================
+def cleanup_old_logs(log_dir: Path, retention_days: int = 60):
+    """古いログファイルを削除"""
+    if not log_dir.exists():
+        return
+
+    cutoff_date = datetime.now() - timedelta(days=retention_days)
+    deleted_count = 0
+
+    # process.log.YYYYMMDD 形式のローテーションログ
+    for file_path in log_dir.glob("process.log.*"):
         try:
-            shutil.copy2(backup_path, full_path)
-            logger.debug("バックアップから復元完了")
+            if file_path.stat().st_mtime < cutoff_date.timestamp():
+                file_path.unlink()
+                deleted_count += 1
+                logger.debug(f"ログファイル削除: {file_path.name}")
         except OSError:
             pass
-        return {"status": "error", "reason": str(e), "path": full_path}
+
+    # 古いログファイル（*.log）
+    for file_path in log_dir.glob("*.log"):
+        if file_path.name == "process.log":
+            continue  # 現在のログはスキップ
+        try:
+            if file_path.stat().st_mtime < cutoff_date.timestamp():
+                file_path.unlink()
+                deleted_count += 1
+                logger.debug(f"ログファイル削除: {file_path.name}")
+        except OSError:
+            pass
+
+    if deleted_count > 0:
+        logger.info(
+            f"ログローテーション: {deleted_count}件削除 ({retention_days}日以前)"
+        )
 
 
 # ======================
@@ -468,16 +612,28 @@ def main():
     target_date = datetime.now().date() - timedelta(days=args.days_ago)
 
     logger.info("=" * 60)
-    logger.info("バッチ処理開始")
+    logger.info(f"バッチ処理開始 (Two-Stage)")
     logger.info(f"  対象日: {target_date}")
     logger.info(f"  最大処理数: {args.limit}件")
     logger.info(f"  S3マウント: {S3_MOUNT}")
-    logger.info(f"  モデル: {MODEL_PATH}")
+    logger.info(f"  Segモデル: {SEG_MODEL_PATH}")
+    logger.info(f"  Poseモデル: {POSE_MODEL_PATH}")
     logger.info("=" * 60)
 
     # 設定検証
     if not validate_config():
         return
+
+    # モデル読み込み（初回のみ）
+    try:
+        load_models()
+    except Exception as e:
+        logger.error(f"モデル読み込み失敗: {e}")
+        return
+
+    # ログローテーション（60日以前を削除）
+    tracker.cleanup_old_files(LOG_RETENTION_DAYS)
+    cleanup_old_logs(LOG_DIR, LOG_RETENTION_DAYS)
 
     # 既存のトラッキング統計
     existing_stats = tracker.get_stats(target_date)
@@ -486,8 +642,17 @@ def main():
         f"(成功: {existing_stats['success']}, エラー: {existing_stats['error']})"
     )
 
-    # 画像を取得
-    images = get_images_by_date(days_ago=args.days_ago)
+    # 最後の処理時刻を取得（増分取得用）
+    last_processed_time = tracker.get_last_processed_time(target_date)
+    if last_processed_time:
+        logger.info(f"増分取得: {last_processed_time} 以降の画像のみ")
+    else:
+        logger.info("初回実行: 全件取得")
+
+    # 画像を取得（増分取得）
+    images = get_images_by_date(
+        days_ago=args.days_ago, last_processed_time=last_processed_time
+    )
 
     if not images:
         logger.info(f"{target_date} の画像はありません")
@@ -615,6 +780,10 @@ def main():
     # 最終トラッキング統計
     final_stats = tracker.get_stats(target_date)
     logger.info(f"トラッキング累計: {final_stats['total']}件処理済み")
+
+    # last_processed_timeを更新（次回は増分取得）
+    tracker.set_last_processed_time(target_date, datetime.now())
+    logger.info(f"次回増分取得: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 以降")
     logger.info("=" * 60)
 
 
