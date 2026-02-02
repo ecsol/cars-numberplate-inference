@@ -125,8 +125,20 @@ def s3_upload_backup(local_path: str, s3_key: str):
 
 
 def s3_download_backup(s3_key: str, local_path: str):
-    """S3からバックアップをダウンロード"""
-    get_s3_client().download_file(BACKUP_S3_BUCKET, s3_key, local_path)
+    """S3からバックアップをダウンロード（mountpoint-s3対応）"""
+    import tempfile
+    
+    # mountpoint-s3はrenameをサポートしないため、
+    # 一旦ローカルtempにダウンロードしてからコピー
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp_path = tmp.name
+    
+    try:
+        get_s3_client().download_file(BACKUP_S3_BUCKET, s3_key, tmp_path)
+        shutil.copy(tmp_path, local_path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 # ======================
