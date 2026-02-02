@@ -45,13 +45,14 @@ credentials.json
 runs/
 wandb/
 
-# Model weights
+# Model weights (large files)
+*.pt
 *.pth
 *.onnx
 *.engine
 *.tflite
 *.mlmodel
-# Allow production model
+# Allow small production model only
 !models/best.pt
 
 # Checkpoints
