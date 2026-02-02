@@ -266,9 +266,11 @@ class ProcessingTracker:
         data = self.load(target_date)
         return str(file_id) in data["processed"]
 
-    def has_car_any_processed(self, target_date: datetime.date, car_path_prefix: str) -> bool:
+    def has_car_any_processed(
+        self, target_date: datetime.date, car_path_prefix: str
+    ) -> bool:
         """車両のいずれかのファイルが処理済みかどうか（パスパターンでチェック）
-        
+
         Args:
             car_path_prefix: 例 "/upfile/1041/8430/"
         """
@@ -411,69 +413,41 @@ def load_models():
 # ======================
 # データベース
 # ======================
-def get_images_by_date(
-    days_ago: int = 0, last_processed_time: Optional[datetime] = None
-) -> list:
+def get_images_by_date(days_ago: int = 0) -> list:
     """
-    指定日に作成/更新された画像を取得
+    指定日に作成/更新された画像を取得（全件取得、トラッキングで処理済みをスキップ）
 
     Args:
         days_ago: 何日前の画像を取得するか (0=今日, 1=昨日, ...)
-        last_processed_time: この時刻以降に作成/更新された画像のみ取得（増分取得）
 
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
     """
     target_date = datetime.now().date() - timedelta(days=days_ago)
 
-    # 増分取得: last_processed_time以降のみ
-    if last_processed_time:
-        query = """
-            SELECT 
-                id,
-                car_cd,
-                inspresultdata_cd,
-                branch_no,
-                save_file_name,
-                created,
-                modified
-            FROM upload_files
-            WHERE (DATE(created) = %s OR DATE(modified) = %s)
-              AND (created > %s OR modified > %s)
-              AND delete_flg = 0
-              AND save_file_name IS NOT NULL
-              AND save_file_name != ''
-            ORDER BY 
-                COALESCE(inspresultdata_cd, car_cd::text),
-                branch_no ASC
-        """
-        params = (target_date, target_date, last_processed_time, last_processed_time)
-    else:
-        # 初回: 全件取得
-        query = """
-            SELECT 
-                id,
-                car_cd,
-                inspresultdata_cd,
-                branch_no,
-                save_file_name,
-                created,
-                modified
-            FROM upload_files
-            WHERE (DATE(created) = %s OR DATE(modified) = %s)
-              AND delete_flg = 0
-              AND save_file_name IS NOT NULL
-              AND save_file_name != ''
-            ORDER BY 
-                COALESCE(inspresultdata_cd, car_cd::text),
-                branch_no ASC
-        """
-        params = (target_date, target_date)
+    # 常に全件取得（処理済みはトラッキングでスキップ）
+    query = """
+        SELECT 
+            id,
+            car_cd,
+            inspresultdata_cd,
+            branch_no,
+            save_file_name,
+            created,
+            modified
+        FROM upload_files
+        WHERE (DATE(created) = %s OR DATE(modified) = %s)
+          AND delete_flg = 0
+          AND save_file_name IS NOT NULL
+          AND save_file_name != ''
+        ORDER BY 
+            COALESCE(inspresultdata_cd, car_cd::text),
+            branch_no ASC
+    """
+    params = (target_date, target_date)
 
     try:
         logger.debug(f"DB接続: {DB_CONFIG['host']}")
-        if last_processed_time:
-            logger.debug(f"増分取得: {last_processed_time} 以降")
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         cur.execute(query, params)
@@ -762,17 +736,8 @@ def main():
         f"(成功: {existing_stats['success']}, エラー: {existing_stats['error']})"
     )
 
-    # 最後の処理時刻を取得（増分取得用）
-    last_processed_time = tracker.get_last_processed_time(target_date)
-    if last_processed_time:
-        logger.info(f"増分取得: {last_processed_time} 以降の画像のみ")
-    else:
-        logger.info("初回実行: 全件取得")
-
-    # 画像を取得（増分取得）
-    images = get_images_by_date(
-        days_ago=args.days_ago, last_processed_time=last_processed_time
-    )
+    # 画像を取得（全件取得、トラッキングで処理済みをスキップ）
+    images = get_images_by_date(days_ago=args.days_ago)
 
     if not images:
         logger.info(f"{target_date} の画像はありません")
@@ -828,7 +793,7 @@ def main():
         # 車両のフォルダパスを取得: /upfile/1041/8430/
         first_file_path = car_files[0]["path"]
         car_dir = os.path.dirname(first_file_path) + "/"  # /upfile/1041/8430/
-        
+
         if tracker.has_car_any_processed(target_date, car_dir):
             stats["skip_tracked"] += len(car_files)
             logger.debug(f"車両スキップ（処理中）: {car_key} (フォルダ: {car_dir})")
@@ -905,10 +870,6 @@ def main():
     # 最終トラッキング統計
     final_stats = tracker.get_stats(target_date)
     logger.info(f"トラッキング累計: {final_stats['total']}件処理済み")
-
-    # last_processed_timeを更新（次回は増分取得）
-    tracker.set_last_processed_time(target_date, datetime.now())
-    logger.info(f"次回増分取得: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} 以降")
     logger.info("=" * 60)
 
 
