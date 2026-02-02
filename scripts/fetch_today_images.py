@@ -24,9 +24,13 @@ import json
 import os
 import sys
 import shutil
+import warnings
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
+
+# Suppress boto3 Python 3.9 deprecation warning
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="boto3")
 
 import boto3
 from botocore.exceptions import ClientError
@@ -593,7 +597,9 @@ def backup_and_process(
         # バックアップパス情報
         if BACKUP_S3_BUCKET:
             dir_part = os.path.dirname(relative_path)
-            result["backup_path"] = f"s3://{BACKUP_S3_BUCKET}/webroot/{dir_part}/.backup/{file_name}"
+            result["backup_path"] = (
+                f"s3://{BACKUP_S3_BUCKET}/webroot/{dir_part}/.backup/{file_name}"
+            )
         elif BACKUP_DIR:
             result["backup_path"] = os.path.join(BACKUP_DIR, relative_path)
         logger.debug(f"処理完了: 検出数={result.get('detections', 0)}")
