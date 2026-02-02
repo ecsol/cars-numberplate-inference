@@ -87,8 +87,9 @@ else:
 LOG_FILE = LOG_DIR / "process.log"
 
 # バックアップ設定
-# S3は書き込み不可の場合があるため、ローカルにバックアップ
-BACKUP_DIR = os.getenv("BACKUP_DIR", str(PROJECT_DIR / "backup"))
+# S3_MOUNTに.backupを作成（S3直接書き込み）
+# S3はオブジェクトストレージなのでmkdirsは使わない
+BACKUP_DIR = os.getenv("BACKUP_DIR", "")  # 空の場合はS3_MOUNT/.backupを使用
 
 
 # ======================
@@ -457,11 +458,16 @@ def backup_and_process(
         logger.warn(f"ファイル未検出: {full_path}")
         return {"status": "skip", "reason": "file_not_found", "path": full_path}
 
-    # バックアップパス（ローカルに保存 - S3は書き込み不可の場合あり）
+    # バックアップパス設定
+    # BACKUP_DIRが空の場合はS3_MOUNT/.backupを使用
+    backup_base = BACKUP_DIR if BACKUP_DIR else os.path.join(S3_MOUNT, ".backup")
     file_name = os.path.basename(full_path)
     relative_path = file_path.lstrip("/")  # upfile/1405469G/xxx.jpg
-    backup_path = os.path.join(BACKUP_DIR, relative_path)
+    backup_path = os.path.join(backup_base, relative_path)
     backup_dir = os.path.dirname(backup_path)
+
+    # S3上のバックアップかどうか判定（mkdirsの挙動を変える）
+    is_s3_backup = backup_base.startswith(S3_MOUNT) if S3_MOUNT else False
 
     # バックアップ処理
     # - バックアップが存在する場合: バックアップから復元して処理（二重処理防止）
@@ -481,7 +487,11 @@ def backup_and_process(
     else:
         # 初回: バックアップ作成
         try:
-            os.makedirs(backup_dir, exist_ok=True)
+            # S3の場合はmkdirsを使わない（オブジェクトとして.backupが作成されてしまう）
+            # ローカルの場合のみディレクトリ作成
+            if not is_s3_backup:
+                os.makedirs(backup_dir, exist_ok=True)
+
             logger.debug(f"バックアップ作成: {backup_path}")
             shutil.copy2(full_path, backup_path)
         except Exception as e:
@@ -612,11 +622,18 @@ def main():
     # 対象日を計算
     target_date = datetime.now().date() - timedelta(days=args.days_ago)
 
+    # バックアップ先を決定
+    backup_location = BACKUP_DIR if BACKUP_DIR else os.path.join(S3_MOUNT, ".backup")
+    is_s3_backup = backup_location.startswith(S3_MOUNT) if S3_MOUNT else False
+
     logger.info("=" * 60)
     logger.info(f"バッチ処理開始 (Two-Stage)")
     logger.info(f"  対象日: {target_date}")
     logger.info(f"  最大処理数: {args.limit}件")
     logger.info(f"  S3マウント: {S3_MOUNT}")
+    logger.info(
+        f"  バックアップ: {backup_location} ({'S3' if is_s3_backup else 'ローカル'})"
+    )
     logger.info(f"  Segモデル: {SEG_MODEL_PATH}")
     logger.info(f"  Poseモデル: {POSE_MODEL_PATH}")
     logger.info("=" * 60)
