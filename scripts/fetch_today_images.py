@@ -30,7 +30,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 # Suppress boto3 Python 3.9 deprecation warning
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="boto3")
+warnings.filterwarnings("ignore", message=".*Boto3 will no longer support Python 3.9.*")
 
 import boto3
 from botocore.exceptions import ClientError
