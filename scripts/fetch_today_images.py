@@ -413,41 +413,70 @@ def load_models():
 # ======================
 # データベース
 # ======================
-def get_images_by_date(days_ago: int = 0) -> list:
+def get_images_by_date(
+    days_ago: int = 0, last_fetch_time: Optional[datetime] = None
+) -> list:
     """
-    指定日に作成/更新された画像を取得（全件取得、トラッキングで処理済みをスキップ）
+    指定日に作成/更新された画像を取得
 
     Args:
         days_ago: 何日前の画像を取得するか (0=今日, 1=昨日, ...)
+        last_fetch_time: この時刻以降に作成/更新された画像のみ取得（増分取得でDB負荷軽減）
 
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
     """
     target_date = datetime.now().date() - timedelta(days=days_ago)
 
-    # 常に全件取得（処理済みはトラッキングでスキップ）
-    query = """
-        SELECT 
-            id,
-            car_cd,
-            inspresultdata_cd,
-            branch_no,
-            save_file_name,
-            created,
-            modified
-        FROM upload_files
-        WHERE (DATE(created) = %s OR DATE(modified) = %s)
-          AND delete_flg = 0
-          AND save_file_name IS NOT NULL
-          AND save_file_name != ''
-        ORDER BY 
-            COALESCE(inspresultdata_cd, car_cd::text),
-            branch_no ASC
-    """
-    params = (target_date, target_date)
+    if last_fetch_time:
+        # 増分取得: last_fetch_time以降の新規/更新ファイルのみ
+        query = """
+            SELECT 
+                id,
+                car_cd,
+                inspresultdata_cd,
+                branch_no,
+                save_file_name,
+                created,
+                modified
+            FROM upload_files
+            WHERE (DATE(created) = %s OR DATE(modified) = %s)
+              AND (created > %s OR modified > %s)
+              AND delete_flg = 0
+              AND save_file_name IS NOT NULL
+              AND save_file_name != ''
+            ORDER BY 
+                COALESCE(inspresultdata_cd, car_cd::text),
+                branch_no ASC
+        """
+        params = (target_date, target_date, last_fetch_time, last_fetch_time)
+    else:
+        # 初回: 全件取得
+        query = """
+            SELECT 
+                id,
+                car_cd,
+                inspresultdata_cd,
+                branch_no,
+                save_file_name,
+                created,
+                modified
+            FROM upload_files
+            WHERE (DATE(created) = %s OR DATE(modified) = %s)
+              AND delete_flg = 0
+              AND save_file_name IS NOT NULL
+              AND save_file_name != ''
+            ORDER BY 
+                COALESCE(inspresultdata_cd, car_cd::text),
+                branch_no ASC
+        """
+        params = (target_date, target_date)
+
 
     try:
         logger.debug(f"DB接続: {DB_CONFIG['host']}")
+        if last_fetch_time:
+            logger.debug(f"増分取得: {last_fetch_time} 以降")
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
         cur.execute(query, params)
@@ -736,8 +765,15 @@ def main():
         f"(成功: {existing_stats['success']}, エラー: {existing_stats['error']})"
     )
 
-    # 画像を取得（全件取得、トラッキングで処理済みをスキップ）
-    images = get_images_by_date(days_ago=args.days_ago)
+    # 最後のDB取得時刻を取得（増分取得でDB負荷軽減）
+    last_fetch_time = tracker.get_last_processed_time(target_date)
+    if last_fetch_time:
+        logger.info(f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル")
+    else:
+        logger.info("初回実行: 全件取得")
+
+    # 画像を取得
+    images = get_images_by_date(days_ago=args.days_ago, last_fetch_time=last_fetch_time)
 
     if not images:
         logger.info(f"{target_date} の画像はありません")
@@ -870,6 +906,10 @@ def main():
     # 最終トラッキング統計
     final_stats = tracker.get_stats(target_date)
     logger.info(f"トラッキング累計: {final_stats['total']}件処理済み")
+
+    # last_fetch_timeを更新（次回は新規ファイルのみ取得）
+    tracker.set_last_processed_time(target_date, datetime.now())
+    logger.info(f"次回増分取得: {datetime.now().strftime('%H:%M:%S')} 以降")
     logger.info("=" * 60)
 
 
