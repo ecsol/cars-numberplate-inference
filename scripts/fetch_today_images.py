@@ -126,19 +126,13 @@ def s3_upload_backup(local_path: str, s3_key: str):
 
 def s3_download_backup(s3_key: str, local_path: str):
     """S3からバックアップをダウンロード（mountpoint-s3対応）"""
-    import tempfile
+    # mountpoint-s3はshutil.copyが動かないため、
+    # バイト単位で直接書き込む
+    response = get_s3_client().get_object(Bucket=BACKUP_S3_BUCKET, Key=s3_key)
+    data = response["Body"].read()
     
-    # mountpoint-s3はrenameをサポートしないため、
-    # 一旦ローカルtempにダウンロードしてからコピー
-    with tempfile.NamedTemporaryFile(delete=False) as tmp:
-        tmp_path = tmp.name
-    
-    try:
-        get_s3_client().download_file(BACKUP_S3_BUCKET, s3_key, tmp_path)
-        shutil.copy(tmp_path, local_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    with open(local_path, "wb") as f:
+        f.write(data)
 
 
 # ======================
@@ -515,14 +509,18 @@ def backup_and_process(
     # 優先順位: BACKUP_S3_BUCKET > BACKUP_DIR
     if BACKUP_S3_BUCKET:
         # === boto3 S3バックアップ（推奨）===
-        s3_key = f"{BACKUP_S3_PREFIX}/{relative_path}"  # .backup/upfile/1041/8430/xxx.jpg
-        
+        s3_key = (
+            f"{BACKUP_S3_PREFIX}/{relative_path}"  # .backup/upfile/1041/8430/xxx.jpg
+        )
+
         try:
             backup_exists = s3_backup_exists(s3_key)
-            
+
             if backup_exists:
                 # S3からローカルに復元
-                logger.debug(f"S3バックアップから復元: s3://{BACKUP_S3_BUCKET}/{s3_key}")
+                logger.debug(
+                    f"S3バックアップから復元: s3://{BACKUP_S3_BUCKET}/{s3_key}"
+                )
                 s3_download_backup(s3_key, full_path)
             else:
                 # 初回: S3にバックアップ
