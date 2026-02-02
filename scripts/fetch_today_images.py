@@ -465,9 +465,11 @@ def backup_and_process(
     backup_path = os.path.join(backup_dir, file_name)
 
     # バックアップ処理
-    # - バックアップが存在する場合: バックアップから復元して処理（二重処理防止）
-    # - バックアップが存在しない場合: 現在の画像をバックアップしてから処理
-    if os.path.exists(backup_path):
+    # 重要: バックアップは一度だけ作成、絶対に上書きしない
+    # 処理時は常にバックアップから復元してクリーンな状態で実行
+    backup_exists = os.path.exists(backup_path)
+    
+    if backup_exists:
         # バックアップから復元（常にオリジナルから処理するため）
         try:
             logger.debug(f"バックアップから復元: {backup_path}")
@@ -480,14 +482,18 @@ def backup_and_process(
                 "path": full_path,
             }
     else:
-        # 初回: バックアップ作成
+        # 初回のみ: バックアップ作成（二度と上書きしない）
         try:
             # .backupフォルダがなければ作成
             if not os.path.exists(backup_dir):
                 os.mkdir(backup_dir)  # mkdir = 1レベルのみ作成（makedirs不使用）
 
-            logger.debug(f"バックアップ作成: {backup_path}")
-            shutil.copy2(full_path, backup_path)
+            # 安全チェック: 万が一バックアップが存在したら絶対に上書きしない
+            if os.path.exists(backup_path):
+                logger.warn(f"バックアップ既存（上書き禁止）: {backup_path}")
+            else:
+                logger.debug(f"バックアップ作成: {backup_path}")
+                shutil.copy2(full_path, backup_path)
         except Exception as e:
             logger.error(f"バックアップ失敗: {e}")
             return {

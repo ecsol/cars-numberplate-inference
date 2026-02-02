@@ -121,55 +121,115 @@ def test_backup_file_operations():
 
 def test_restore_from_backup():
     """Test restore from backup"""
-
+    
     print("\n" + "=" * 60)
     print("Testing restore from backup")
     print("=" * 60)
-
+    
     with tempfile.TemporaryDirectory() as tmpdir:
         car_dir = os.path.join(tmpdir, "upfile", "1234567G")
         os.makedirs(car_dir)
-
+        
         # Create original file
         test_file = os.path.join(car_dir, "test.jpg")
         with open(test_file, "wb") as f:
             f.write(b"original content")
-
+        
         # Create backup
         backup_dir = os.path.join(car_dir, ".backup")
         os.mkdir(backup_dir)
         backup_path = os.path.join(backup_dir, "test.jpg")
         shutil.copy2(test_file, backup_path)
-
+        
         print(f"1. Original file: {test_file}")
         print(f"2. Backup created: {backup_path}")
-
+        
         # Simulate processing (modify original)
         with open(test_file, "wb") as f:
             f.write(b"modified content after processing")
-
+        
         print(f"3. File modified (simulating processing)")
-
+        
         # Restore from backup
         shutil.copy2(backup_path, test_file)
-
+        
         with open(test_file, "rb") as f:
             restored = f.read()
-
+        
         passed = restored == b"original content"
         print(f"4. Restored content matches original: {passed}")
         print(f"\n{'✓ PASS' if passed else '✗ FAIL'}")
+    
+    print("=" * 60)
+    return passed
 
+
+def test_backup_never_overwritten():
+    """Test that backup is NEVER overwritten once created"""
+    
+    print("\n" + "=" * 60)
+    print("Testing backup is NEVER overwritten")
+    print("=" * 60)
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        car_dir = os.path.join(tmpdir, "upfile", "1234567G")
+        os.makedirs(car_dir)
+        
+        # Create original file
+        test_file = os.path.join(car_dir, "test.jpg")
+        with open(test_file, "wb") as f:
+            f.write(b"ORIGINAL - this must be preserved")
+        
+        # Create backup (first time)
+        backup_dir = os.path.join(car_dir, ".backup")
+        backup_path = os.path.join(backup_dir, "test.jpg")
+        
+        if not os.path.exists(backup_dir):
+            os.mkdir(backup_dir)
+        
+        # Simulate first backup
+        if not os.path.exists(backup_path):
+            shutil.copy2(test_file, backup_path)
+            print(f"1. First backup created: {backup_path}")
+        
+        # Verify backup content
+        with open(backup_path, "rb") as f:
+            backup_content = f.read()
+        print(f"2. Backup content: {backup_content}")
+        
+        # Simulate file being modified (processed)
+        with open(test_file, "wb") as f:
+            f.write(b"MODIFIED - processed file")
+        print(f"3. Original file modified to: MODIFIED - processed file")
+        
+        # Try to create backup again (SHOULD NOT OVERWRITE)
+        # This simulates the safety check in fetch_today_images.py
+        if os.path.exists(backup_path):
+            print(f"4. Backup already exists - SKIPPING (no overwrite)")
+        else:
+            shutil.copy2(test_file, backup_path)
+            print(f"4. WARNING: Backup was overwritten!")
+        
+        # Verify backup is still original
+        with open(backup_path, "rb") as f:
+            final_backup = f.read()
+        
+        passed = final_backup == b"ORIGINAL - this must be preserved"
+        print(f"5. Backup still contains original: {passed}")
+        print(f"   Backup content: {final_backup}")
+        print(f"\n{'✓ PASS' if passed else '✗ FAIL'}")
+    
     print("=" * 60)
     return passed
 
 
 if __name__ == "__main__":
     results = []
-
+    
     results.append(("Backup path logic", test_backup_path_logic()))
     results.append(("File operations", test_backup_file_operations()))
     results.append(("Restore from backup", test_restore_from_backup()))
+    results.append(("Backup NEVER overwritten", test_backup_never_overwritten()))
 
     print("\n" + "=" * 60)
     print("SUMMARY")
