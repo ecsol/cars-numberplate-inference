@@ -414,19 +414,18 @@ def load_models():
 # データベース
 # ======================
 def get_images_by_date(
-    days_ago: int = 0, last_fetch_time: Optional[datetime] = None
+    target_date: datetime.date, last_fetch_time: Optional[datetime] = None
 ) -> list:
     """
     指定日に作成/更新された画像を取得
 
     Args:
-        days_ago: 何日前の画像を取得するか (0=今日, 1=昨日, ...)
+        target_date: 対象日
         last_fetch_time: この時刻以降に作成/更新された画像のみ取得（増分取得でDB負荷軽減）
 
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
     """
-    target_date = datetime.now().date() - timedelta(days=days_ago)
 
     if last_fetch_time:
         # 増分取得: last_fetch_time以降の新規/更新ファイルのみ
@@ -471,7 +470,6 @@ def get_images_by_date(
                 branch_no ASC
         """
         params = (target_date, target_date)
-
 
     try:
         logger.debug(f"DB接続: {DB_CONFIG['host']}")
@@ -703,6 +701,7 @@ def main():
 使用例:
   python fetch_today_images.py                    # 今日の画像、最大10件
   python fetch_today_images.py --days-ago 1      # 昨日の画像
+  python fetch_today_images.py --date 2026-02-03 # 特定の日付を指定
   python fetch_today_images.py --limit 50        # 最大50件処理
   python fetch_today_images.py --days-ago 7 --limit 100
         """,
@@ -714,6 +713,12 @@ def main():
         help="何日前の画像を処理するか (0=今日, 1=昨日, ...) [デフォルト: 0]",
     )
     parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="処理対象日を指定 (YYYY-MM-DD形式、--days-agoより優先)",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=10,
@@ -723,7 +728,14 @@ def main():
     args = parser.parse_args()
 
     # 対象日を計算
-    target_date = datetime.now().date() - timedelta(days=args.days_ago)
+    if args.date:
+        try:
+            target_date = datetime.strptime(args.date, "%Y-%m-%d").date()
+        except ValueError:
+            logger.error(f"日付形式が不正: {args.date} (YYYY-MM-DD形式で指定)")
+            return
+    else:
+        target_date = datetime.now().date() - timedelta(days=args.days_ago)
 
     # バックアップ先
     if BACKUP_S3_BUCKET:
@@ -768,12 +780,14 @@ def main():
     # 最後のDB取得時刻を取得（増分取得でDB負荷軽減）
     last_fetch_time = tracker.get_last_processed_time(target_date)
     if last_fetch_time:
-        logger.info(f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル")
+        logger.info(
+            f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル"
+        )
     else:
         logger.info("初回実行: 全件取得")
 
     # 画像を取得
-    images = get_images_by_date(days_ago=args.days_ago, last_fetch_time=last_fetch_time)
+    images = get_images_by_date(target_date=target_date, last_fetch_time=last_fetch_time)
 
     if not images:
         logger.info(f"{target_date} の画像はありません")
