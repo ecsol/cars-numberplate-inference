@@ -87,7 +87,8 @@ else:
 LOG_FILE = LOG_DIR / "process.log"
 
 # バックアップ設定
-# S3上の同じフォルダに.backupを作成
+# S3は書き込み不可の場合があるため、ローカルにバックアップ
+BACKUP_DIR = os.getenv("BACKUP_DIR", str(PROJECT_DIR / "backup"))
 
 
 # ======================
@@ -456,11 +457,11 @@ def backup_and_process(
         logger.warn(f"ファイル未検出: {full_path}")
         return {"status": "skip", "reason": "file_not_found", "path": full_path}
 
-    # バックアップパス（S3上の同じフォルダに.backup）
+    # バックアップパス（ローカルに保存 - S3は書き込み不可の場合あり）
     file_name = os.path.basename(full_path)
-    file_dir = os.path.dirname(full_path)
-    backup_dir = os.path.join(file_dir, ".backup")
-    backup_path = os.path.join(backup_dir, file_name)
+    relative_path = file_path.lstrip("/")  # upfile/1405469G/xxx.jpg
+    backup_path = os.path.join(BACKUP_DIR, relative_path)
+    backup_dir = os.path.dirname(backup_path)
 
     # バックアップ処理
     # - バックアップが存在する場合: バックアップから復元して処理（二重処理防止）
