@@ -266,6 +266,19 @@ class ProcessingTracker:
         data = self.load(target_date)
         return str(file_id) in data["processed"]
 
+    def has_car_any_processed(self, target_date: datetime.date, car_path_prefix: str) -> bool:
+        """車両のいずれかのファイルが処理済みかどうか（パスパターンでチェック）
+        
+        Args:
+            car_path_prefix: 例 "/upfile/1041/8430/"
+        """
+        data = self.load(target_date)
+        for record in data.get("processed", {}).values():
+            path = record.get("path", "")
+            if path.startswith(car_path_prefix):
+                return True
+        return False
+
     def mark_processed(
         self,
         target_date: datetime.date,
@@ -811,17 +824,14 @@ def main():
         # branch_noでソート
         car_files.sort(key=lambda x: x["branch_no"] or 999)
 
-        # この車両が既に一部処理済みかチェック（処理済みならスキップして次の車両へ）
-        any_tracked = any(
-            tracker.is_processed(target_date, f["id"]) for f in car_files
-        )
-        if any_tracked:
-            # 処理済みファイル数をカウント
-            tracked_count = sum(
-                1 for f in car_files if tracker.is_processed(target_date, f["id"])
-            )
-            stats["skip_tracked"] += tracked_count
-            logger.debug(f"車両スキップ（処理中）: {car_key} ({tracked_count}/{len(car_files)}枚処理済み)")
+        # この車両が既に一部処理済みかチェック（パスパターンで判定）
+        # 車両のフォルダパスを取得: /upfile/1041/8430/
+        first_file_path = car_files[0]["path"]
+        car_dir = os.path.dirname(first_file_path) + "/"  # /upfile/1041/8430/
+        
+        if tracker.has_car_any_processed(target_date, car_dir):
+            stats["skip_tracked"] += len(car_files)
+            logger.debug(f"車両スキップ（処理中）: {car_key} (フォルダ: {car_dir})")
             continue
 
         logger.debug(f"車両処理開始: {car_key} ({len(car_files)}枚)")
