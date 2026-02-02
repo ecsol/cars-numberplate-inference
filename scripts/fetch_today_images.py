@@ -28,6 +28,8 @@ from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional
 
+import boto3
+from botocore.exceptions import ClientError
 import psycopg2
 
 # スクリプトディレクトリ
@@ -87,9 +89,44 @@ else:
 LOG_FILE = LOG_DIR / "process.log"
 
 # バックアップ設定
-# BACKUP_DIR設定時: ローカルにバックアップ（mountpoint-s3は書き込み制限あり）
-# BACKUP_DIR未設定: 車両フォルダ内に.backupを作成（s3fs等の場合）
+# BACKUP_S3_BUCKET: boto3でS3に直接バックアップ（推奨 - mountpoint-s3の制限を回避）
+# BACKUP_DIR: ローカルにバックアップ
+# どちらも未設定: エラー
+BACKUP_S3_BUCKET = os.getenv("BACKUP_S3_BUCKET", "")  # 例: cs1es3
+BACKUP_S3_PREFIX = os.getenv("BACKUP_S3_PREFIX", ".backup")  # S3 key prefix
 BACKUP_DIR = os.getenv("BACKUP_DIR", "")
+
+# boto3 S3 client (lazy init)
+_s3_client = None
+
+
+def get_s3_client():
+    """S3クライアントを取得（遅延初期化）"""
+    global _s3_client
+    if _s3_client is None:
+        _s3_client = boto3.client("s3")
+    return _s3_client
+
+
+def s3_backup_exists(s3_key: str) -> bool:
+    """S3にバックアップが存在するか確認"""
+    try:
+        get_s3_client().head_object(Bucket=BACKUP_S3_BUCKET, Key=s3_key)
+        return True
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "404":
+            return False
+        raise
+
+
+def s3_upload_backup(local_path: str, s3_key: str):
+    """ローカルファイルをS3にバックアップ"""
+    get_s3_client().upload_file(local_path, BACKUP_S3_BUCKET, s3_key)
+
+
+def s3_download_backup(s3_key: str, local_path: str):
+    """S3からバックアップをダウンロード"""
+    get_s3_client().download_file(BACKUP_S3_BUCKET, s3_key, local_path)
 
 
 # ======================
@@ -462,54 +499,74 @@ def backup_and_process(
     file_name = os.path.basename(full_path)
     relative_path = file_path.lstrip("/")  # upfile/1041/8430/xxx.jpg
 
-    if BACKUP_DIR:
-        # BACKUP_DIR設定時: ローカルにバックアップ
-        # 構造: BACKUP_DIR/upfile/1041/8430/xxx.jpg
+    # バックアップモード判定
+    # 優先順位: BACKUP_S3_BUCKET > BACKUP_DIR
+    if BACKUP_S3_BUCKET:
+        # === boto3 S3バックアップ（推奨）===
+        s3_key = f"{BACKUP_S3_PREFIX}/{relative_path}"  # .backup/upfile/1041/8430/xxx.jpg
+        
+        try:
+            backup_exists = s3_backup_exists(s3_key)
+            
+            if backup_exists:
+                # S3からローカルに復元
+                logger.debug(f"S3バックアップから復元: s3://{BACKUP_S3_BUCKET}/{s3_key}")
+                s3_download_backup(s3_key, full_path)
+            else:
+                # 初回: S3にバックアップ
+                logger.debug(f"S3バックアップ作成: s3://{BACKUP_S3_BUCKET}/{s3_key}")
+                s3_upload_backup(full_path, s3_key)
+        except Exception as e:
+            logger.error(f"S3バックアップ失敗: {e}")
+            return {
+                "status": "error",
+                "reason": f"s3_backup_failed: {e}",
+                "path": full_path,
+            }
+    elif BACKUP_DIR:
+        # === ローカルバックアップ ===
         backup_path = os.path.join(BACKUP_DIR, relative_path)
         backup_dir = os.path.dirname(backup_path)
+        backup_exists = os.path.exists(backup_path)
+
+        if backup_exists:
+            # ローカルから復元
+            try:
+                logger.debug(f"ローカルバックアップから復元: {backup_path}")
+                shutil.copy(backup_path, full_path)
+            except Exception as e:
+                logger.error(f"復元失敗: {e}")
+                return {
+                    "status": "error",
+                    "reason": f"restore_failed: {e}",
+                    "path": full_path,
+                }
+        else:
+            # 初回: ローカルにバックアップ
+            try:
+                if not os.path.exists(backup_dir):
+                    os.makedirs(backup_dir, exist_ok=True)
+
+                if os.path.exists(backup_path):
+                    logger.warn(f"バックアップ既存（上書き禁止）: {backup_path}")
+                else:
+                    logger.debug(f"ローカルバックアップ作成: {backup_path}")
+                    shutil.copy(full_path, backup_path)
+            except Exception as e:
+                logger.error(f"バックアップ失敗: {e}")
+                return {
+                    "status": "error",
+                    "reason": f"backup_failed: {e}",
+                    "path": full_path,
+                }
     else:
-        # 車両フォルダ内に.backupを作成: /upfile/車両コード/.backup/画像.jpg
-        file_dir = os.path.dirname(full_path)
-        backup_dir = os.path.join(file_dir, ".backup")
-        backup_path = os.path.join(backup_dir, file_name)
-
-    # バックアップ処理
-    # 重要: バックアップは一度だけ作成、絶対に上書きしない
-    # 処理時は常にバックアップから復元してクリーンな状態で実行
-    backup_exists = os.path.exists(backup_path)
-
-    if backup_exists:
-        # バックアップから復元（常にオリジナルから処理するため）
-        try:
-            logger.debug(f"バックアップから復元: {backup_path}")
-            shutil.copy(backup_path, full_path)  # copy not copy2 (S3 doesn't support metadata)
-        except Exception as e:
-            logger.error(f"復元失敗: {e}")
-            return {
-                "status": "error",
-                "reason": f"restore_failed: {e}",
-                "path": full_path,
-            }
-    else:
-        # 初回のみ: バックアップ作成（二度と上書きしない）
-        try:
-            # ローカルの場合のみディレクトリ作成（S3はobject keyなので不要）
-            if BACKUP_DIR and not os.path.exists(backup_dir):
-                os.makedirs(backup_dir, exist_ok=True)
-
-            # 安全チェック: 万が一バックアップが存在したら絶対に上書きしない
-            if os.path.exists(backup_path):
-                logger.warn(f"バックアップ既存（上書き禁止）: {backup_path}")
-            else:
-                logger.debug(f"バックアップ作成: {backup_path}")
-                shutil.copy(full_path, backup_path)  # copy not copy2 (S3 doesn't support metadata)
-        except Exception as e:
-            logger.error(f"バックアップ失敗: {e}")
-            return {
-                "status": "error",
-                "reason": f"backup_failed: {e}",
-                "path": full_path,
-            }
+        # どちらも未設定はエラー
+        logger.error("BACKUP_S3_BUCKET または BACKUP_DIR を設定してください")
+        return {
+            "status": "error",
+            "reason": "no_backup_config",
+            "path": full_path,
+        }
 
     # 処理実行（Two-Stage: Seg + Pose）
     try:
@@ -632,7 +689,12 @@ def main():
     target_date = datetime.now().date() - timedelta(days=args.days_ago)
 
     # バックアップ先
-    backup_location = BACKUP_DIR if BACKUP_DIR else "車両フォルダ内/.backup/"
+    if BACKUP_S3_BUCKET:
+        backup_location = f"s3://{BACKUP_S3_BUCKET}/{BACKUP_S3_PREFIX}/ (boto3)"
+    elif BACKUP_DIR:
+        backup_location = f"{BACKUP_DIR} (ローカル)"
+    else:
+        backup_location = "未設定（エラー）"
 
     logger.info("=" * 60)
     logger.info(f"バッチ処理開始 (Two-Stage)")
