@@ -130,7 +130,7 @@ def s3_download_backup(s3_key: str, local_path: str):
     # バイト単位で直接書き込む
     response = get_s3_client().get_object(Bucket=BACKUP_S3_BUCKET, Key=s3_key)
     data = response["Body"].read()
-    
+
     with open(local_path, "wb") as f:
         f.write(data)
 
@@ -590,7 +590,11 @@ def backup_and_process(
             is_masking=is_first_image,
         )
         result["status"] = "success"
-        result["backup_path"] = backup_path
+        # バックアップパス情報
+        if BACKUP_S3_BUCKET:
+            result["backup_path"] = f"s3://{BACKUP_S3_BUCKET}/{BACKUP_S3_PREFIX}/{relative_path}"
+        elif BACKUP_DIR:
+            result["backup_path"] = os.path.join(BACKUP_DIR, relative_path)
         logger.debug(f"処理完了: 検出数={result.get('detections', 0)}")
         return result
     except Exception as e:
