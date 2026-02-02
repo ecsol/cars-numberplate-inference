@@ -87,8 +87,9 @@ else:
 LOG_FILE = LOG_DIR / "process.log"
 
 # バックアップ設定
-# 車両フォルダ内に.backupフォルダを作成
-# 例: /upfile/車両コード/.backup/画像.jpg
+# BACKUP_DIR設定時: ローカルにバックアップ（mountpoint-s3は書き込み制限あり）
+# BACKUP_DIR未設定: 車両フォルダ内に.backupを作成（s3fs等の場合）
+BACKUP_DIR = os.getenv("BACKUP_DIR", "")
 
 
 # ======================
@@ -458,11 +459,19 @@ def backup_and_process(
         return {"status": "skip", "reason": "file_not_found", "path": full_path}
 
     # バックアップパス設定
-    # 車両フォルダ内に.backupを作成: /upfile/車両コード/.backup/画像.jpg
     file_name = os.path.basename(full_path)
-    file_dir = os.path.dirname(full_path)  # /mnt/s3/upfile/車両コード
-    backup_dir = os.path.join(file_dir, ".backup")
-    backup_path = os.path.join(backup_dir, file_name)
+    relative_path = file_path.lstrip("/")  # upfile/1041/8430/xxx.jpg
+    
+    if BACKUP_DIR:
+        # BACKUP_DIR設定時: ローカルにバックアップ
+        # 構造: BACKUP_DIR/upfile/1041/8430/xxx.jpg
+        backup_path = os.path.join(BACKUP_DIR, relative_path)
+        backup_dir = os.path.dirname(backup_path)
+    else:
+        # 車両フォルダ内に.backupを作成: /upfile/車両コード/.backup/画像.jpg
+        file_dir = os.path.dirname(full_path)
+        backup_dir = os.path.join(file_dir, ".backup")
+        backup_path = os.path.join(backup_dir, file_name)
 
     # バックアップ処理
     # 重要: バックアップは一度だけ作成、絶対に上書きしない
@@ -484,9 +493,14 @@ def backup_and_process(
     else:
         # 初回のみ: バックアップ作成（二度と上書きしない）
         try:
-            # .backupフォルダがなければ作成
+            # バックアップフォルダがなければ作成
             if not os.path.exists(backup_dir):
-                os.mkdir(backup_dir)  # mkdir = 1レベルのみ作成（makedirs不使用）
+                if BACKUP_DIR:
+                    # ローカル: 複数階層作成OK
+                    os.makedirs(backup_dir, exist_ok=True)
+                else:
+                    # S3: 1レベルのみ（.backupフォルダ）
+                    os.mkdir(backup_dir)
 
             # 安全チェック: 万が一バックアップが存在したら絶対に上書きしない
             if os.path.exists(backup_path):
@@ -622,12 +636,15 @@ def main():
     # 対象日を計算
     target_date = datetime.now().date() - timedelta(days=args.days_ago)
 
+    # バックアップ先
+    backup_location = BACKUP_DIR if BACKUP_DIR else "車両フォルダ内/.backup/"
+    
     logger.info("=" * 60)
     logger.info(f"バッチ処理開始 (Two-Stage)")
     logger.info(f"  対象日: {target_date}")
     logger.info(f"  最大処理数: {args.limit}件")
     logger.info(f"  S3マウント: {S3_MOUNT}")
-    logger.info(f"  バックアップ: 車両フォルダ内/.backup/")
+    logger.info(f"  バックアップ: {backup_location}")
     logger.info(f"  Segモデル: {SEG_MODEL_PATH}")
     logger.info(f"  Poseモデル: {POSE_MODEL_PATH}")
     logger.info("=" * 60)
