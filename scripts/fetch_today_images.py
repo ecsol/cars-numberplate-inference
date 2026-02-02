@@ -509,9 +509,9 @@ def backup_and_process(
     # 優先順位: BACKUP_S3_BUCKET > BACKUP_DIR
     if BACKUP_S3_BUCKET:
         # === boto3 S3バックアップ（推奨）===
-        s3_key = (
-            f"{BACKUP_S3_PREFIX}/{relative_path}"  # .backup/upfile/1041/8430/xxx.jpg
-        )
+        # S3 key: webroot/upfile/1041/8430/.backup/xxx.jpg
+        dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
+        s3_key = f"webroot/{dir_part}/.backup/{file_name}"
 
         try:
             backup_exists = s3_backup_exists(s3_key)
@@ -592,7 +592,8 @@ def backup_and_process(
         result["status"] = "success"
         # バックアップパス情報
         if BACKUP_S3_BUCKET:
-            result["backup_path"] = f"s3://{BACKUP_S3_BUCKET}/{BACKUP_S3_PREFIX}/{relative_path}"
+            dir_part = os.path.dirname(relative_path)
+            result["backup_path"] = f"s3://{BACKUP_S3_BUCKET}/webroot/{dir_part}/.backup/{file_name}"
         elif BACKUP_DIR:
             result["backup_path"] = os.path.join(BACKUP_DIR, relative_path)
         logger.debug(f"処理完了: 検出数={result.get('detections', 0)}")
@@ -704,7 +705,7 @@ def main():
 
     # バックアップ先
     if BACKUP_S3_BUCKET:
-        backup_location = f"s3://{BACKUP_S3_BUCKET}/{BACKUP_S3_PREFIX}/ (boto3)"
+        backup_location = f"s3://{BACKUP_S3_BUCKET}/webroot/.../.backup/ (boto3)"
     elif BACKUP_DIR:
         backup_location = f"{BACKUP_DIR} (ローカル)"
     else:
