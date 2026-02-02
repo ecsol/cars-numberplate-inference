@@ -811,6 +811,19 @@ def main():
         # branch_noでソート
         car_files.sort(key=lambda x: x["branch_no"] or 999)
 
+        # この車両が既に一部処理済みかチェック（処理済みならスキップして次の車両へ）
+        any_tracked = any(
+            tracker.is_processed(target_date, f["id"]) for f in car_files
+        )
+        if any_tracked:
+            # 処理済みファイル数をカウント
+            tracked_count = sum(
+                1 for f in car_files if tracker.is_processed(target_date, f["id"])
+            )
+            stats["skip_tracked"] += tracked_count
+            logger.debug(f"車両スキップ（処理中）: {car_key} ({tracked_count}/{len(car_files)}枚処理済み)")
+            continue
+
         logger.debug(f"車両処理開始: {car_key} ({len(car_files)}枚)")
 
         for idx, file_info in enumerate(car_files):
@@ -819,11 +832,6 @@ def main():
             # limit到達チェック
             if processed_count >= args.limit:
                 break
-
-            # トラッキングで処理済みかチェック
-            if tracker.is_processed(target_date, file_id):
-                stats["skip_tracked"] += 1
-                continue
 
             is_first = idx == 0
 
