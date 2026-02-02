@@ -1,0 +1,62 @@
+# ============================================================
+# YOLO Segmentation Config - PRECISE CORNER DETECTION
+# Mục tiêu: Detect chính xác 4 góc biển số cho masking
+# ============================================================
+
+# ============ MODEL ============
+model: yolo11x-seg.pt # Model lớn nhất = chính xác nhất
+imgsz: 800 # TĂNG resolution để detect góc rõ hơn
+batch: 8 # Adjust theo VRAM
+
+# ============ TRAINING ============
+epochs: 200 # Nhiều epochs hơn cho precision
+patience: 40 # Patience cao hơn
+optimizer: AdamW # Tốt cho small dataset
+lr0: 0.0005 # LR thấp = học chính xác hơn
+lrf: 0.01
+weight_decay: 0.001 # Regularization mạnh hơn
+warmup_epochs: 10 # Warmup dài hơn
+
+# ============ LOSS WEIGHTS - FOCUS ON BOUNDARIES ============
+box: 10.0 # TĂNG box loss (góc chính xác)
+cls: 0.3 # Giảm (chỉ 1 class)
+dfl: 2.0 # TĂNG distribution focal loss
+
+# ============ SEGMENTATION - HIGH PRECISION ============
+mask_ratio: 1 # QUAN TRỌNG: Full resolution mask!
+overlap_mask: true
+retina_masks: true # High-res mask output
+
+# ============ AUGMENTATION - CẨN THẬN, KHÔNG QUÁ MẠNH ============
+# Geometric (nhẹ nhàng để giữ shape chính xác)
+degrees: 10.0 # Rotation nhẹ (±10°)
+translate: 0.15 # Translation 15%
+scale: 0.3 # Scale nhẹ hơn (giữ chi tiết)
+shear: 5.0 # Shear nhẹ
+perspective: 0.0005 # Perspective rất nhẹ
+
+# Flip
+flipud: 0.0 # KHÔNG flip dọc
+fliplr: 0.5 # Flip ngang OK
+
+# Color (mạnh hơn để robust với lighting)
+hsv_h: 0.02
+hsv_s: 0.7
+hsv_v: 0.5
+
+# Advanced augmentation
+mosaic: 0.8 # Giảm mosaic (giữ boundary rõ)
+mixup: 0.0 # TẮT mixup (làm mờ boundary!)
+copy_paste: 0.2 # Copy-paste nhẹ
+erasing: 0.2 # Erasing nhẹ
+
+# ============ OTHER ============
+close_mosaic: 20 # Tắt mosaic sớm hơn (20 epochs cuối)
+cache: true
+single_cls: true # Chỉ 1 class = plate
+rect: false # Rectangular training off
+cos_lr: true # Cosine LR schedule (smooth)
+
+# ============ VALIDATION ============
+iou: 0.5 # IoU threshold cho NMS
+conf: 0.001 # Low conf để không miss detections
