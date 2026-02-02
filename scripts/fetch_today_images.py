@@ -461,7 +461,7 @@ def backup_and_process(
     # バックアップパス設定
     file_name = os.path.basename(full_path)
     relative_path = file_path.lstrip("/")  # upfile/1041/8430/xxx.jpg
-    
+
     if BACKUP_DIR:
         # BACKUP_DIR設定時: ローカルにバックアップ
         # 構造: BACKUP_DIR/upfile/1041/8430/xxx.jpg
@@ -477,12 +477,12 @@ def backup_and_process(
     # 重要: バックアップは一度だけ作成、絶対に上書きしない
     # 処理時は常にバックアップから復元してクリーンな状態で実行
     backup_exists = os.path.exists(backup_path)
-    
+
     if backup_exists:
         # バックアップから復元（常にオリジナルから処理するため）
         try:
             logger.debug(f"バックアップから復元: {backup_path}")
-            shutil.copy2(backup_path, full_path)
+            shutil.copy(backup_path, full_path)  # copy not copy2 (S3 doesn't support metadata)
         except Exception as e:
             logger.error(f"復元失敗: {e}")
             return {
@@ -493,21 +493,16 @@ def backup_and_process(
     else:
         # 初回のみ: バックアップ作成（二度と上書きしない）
         try:
-            # バックアップフォルダがなければ作成
-            if not os.path.exists(backup_dir):
-                if BACKUP_DIR:
-                    # ローカル: 複数階層作成OK
-                    os.makedirs(backup_dir, exist_ok=True)
-                else:
-                    # S3: 1レベルのみ（.backupフォルダ）
-                    os.mkdir(backup_dir)
+            # ローカルの場合のみディレクトリ作成（S3はobject keyなので不要）
+            if BACKUP_DIR and not os.path.exists(backup_dir):
+                os.makedirs(backup_dir, exist_ok=True)
 
             # 安全チェック: 万が一バックアップが存在したら絶対に上書きしない
             if os.path.exists(backup_path):
                 logger.warn(f"バックアップ既存（上書き禁止）: {backup_path}")
             else:
                 logger.debug(f"バックアップ作成: {backup_path}")
-                shutil.copy2(full_path, backup_path)
+                shutil.copy(full_path, backup_path)  # copy not copy2 (S3 doesn't support metadata)
         except Exception as e:
             logger.error(f"バックアップ失敗: {e}")
             return {
@@ -638,7 +633,7 @@ def main():
 
     # バックアップ先
     backup_location = BACKUP_DIR if BACKUP_DIR else "車両フォルダ内/.backup/"
-    
+
     logger.info("=" * 60)
     logger.info(f"バッチ処理開始 (Two-Stage)")
     logger.info(f"  対象日: {target_date}")
