@@ -659,6 +659,7 @@ def get_images_by_date(
 
     try:
         logger.debug(f"DB接続: {DB_CONFIG['host']}")
+        logger.debug(f"対象日: {target_date}, only_first: {only_first}")
         if last_fetch_time:
             logger.debug(f"増分取得: {last_fetch_time} 以降")
         conn = psycopg2.connect(**DB_CONFIG)
