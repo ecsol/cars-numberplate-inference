@@ -714,86 +714,74 @@ def backup_and_process(
     file_name = os.path.basename(full_path)
     relative_path = file_path.lstrip("/")  # upfile/1041/8430/xxx.jpg
 
-    # バックアップモード判定
-    # 優先順位: BACKUP_S3_BUCKET > BACKUP_DIR
-    if BACKUP_S3_BUCKET:
-        # === boto3 S3バックアップ（推奨）===
-        # S3 key: webroot/upfile/1041/8430/.backup/xxx.jpg
-        dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
-        s3_key = f"webroot/{dir_part}/.backup/{file_name}"
+    # --force モード: バックアップ処理をスキップ（元画像をそのまま使用）
+    if force:
+        logger.debug(
+            f"--force モード: バックアップスキップ、現在の画像から.detect/作成"
+        )
+    else:
+        # === 通常モード: 初回のみバックアップ作成（復元は手動restore_from_backup.pyで） ===
+        # バックアップモード判定
+        # 優先順位: BACKUP_S3_BUCKET > BACKUP_DIR
+        if BACKUP_S3_BUCKET:
+            # === boto3 S3バックアップ（推奨）===
+            # S3 key: webroot/upfile/1041/8430/.backup/xxx.jpg
+            dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
+            s3_key = f"webroot/{dir_part}/.backup/{file_name}"
 
-        try:
-            backup_exists = s3_backup_exists(s3_key)
-
-            if backup_exists:
-                # S3からローカルに復元
-                logger.debug(
-                    f"S3バックアップから復元: s3://{BACKUP_S3_BUCKET}/{s3_key}"
-                )
-                s3_download_backup(s3_key, full_path)
-            else:
-                # 初回: S3にバックアップ
-                logger.debug(f"S3バックアップ作成: s3://{BACKUP_S3_BUCKET}/{s3_key}")
-                s3_upload_backup(full_path, s3_key)
-        except Exception as e:
-            logger.error(f"S3バックアップ失敗: {e}")
-            return {
-                "status": "error",
-                "reason": f"s3_backup_failed: {e}",
-                "path": full_path,
-            }
-    elif BACKUP_DIR:
-        # === ローカルバックアップ ===
-        backup_path = os.path.join(BACKUP_DIR, relative_path)
-        backup_dir = os.path.dirname(backup_path)
-        backup_exists = os.path.exists(backup_path)
-
-        if backup_exists:
-            # ローカルから復元
             try:
-                logger.debug(f"ローカルバックアップから復元: {backup_path}")
-                shutil.copy(backup_path, full_path)
+                backup_exists = s3_backup_exists(s3_key)
+
+                if not backup_exists:
+                    # 初回: S3にバックアップ
+                    logger.debug(
+                        f"S3バックアップ作成: s3://{BACKUP_S3_BUCKET}/{s3_key}"
+                    )
+                    s3_upload_backup(full_path, s3_key)
+                # backup_exists の場合は何もしない（手動復元用に保持）
             except Exception as e:
-                logger.error(f"復元失敗: {e}")
+                logger.error(f"S3バックアップ失敗: {e}")
                 return {
                     "status": "error",
-                    "reason": f"restore_failed: {e}",
+                    "reason": f"s3_backup_failed: {e}",
                     "path": full_path,
                 }
-        else:
-            # 初回: ローカルにバックアップ
-            try:
-                if not os.path.exists(backup_dir):
-                    os.makedirs(backup_dir, exist_ok=True)
+        elif BACKUP_DIR:
+            # === ローカルバックアップ ===
+            backup_path = os.path.join(BACKUP_DIR, relative_path)
+            backup_dir = os.path.dirname(backup_path)
+            backup_exists = os.path.exists(backup_path)
 
-                if os.path.exists(backup_path):
-                    logger.warn(f"バックアップ既存（上書き禁止）: {backup_path}")
-                else:
+            if not backup_exists:
+                # 初回: ローカルにバックアップ
+                try:
+                    if not os.path.exists(backup_dir):
+                        os.makedirs(backup_dir, exist_ok=True)
                     logger.debug(f"ローカルバックアップ作成: {backup_path}")
                     shutil.copy(full_path, backup_path)
-            except Exception as e:
-                logger.error(f"バックアップ失敗: {e}")
-                return {
-                    "status": "error",
-                    "reason": f"backup_failed: {e}",
-                    "path": full_path,
-                }
-    else:
-        # どちらも未設定はエラー
-        logger.error("BACKUP_S3_BUCKET または BACKUP_DIR を設定してください")
-        return {
-            "status": "error",
-            "reason": "no_backup_config",
-            "path": full_path,
-        }
+                except Exception as e:
+                    logger.error(f"バックアップ失敗: {e}")
+                    return {
+                        "status": "error",
+                        "reason": f"backup_failed: {e}",
+                        "path": full_path,
+                    }
+            # backup_exists の場合は何もしない（手動復元用に保持）
+        else:
+            # どちらも未設定はエラー
+            logger.error("BACKUP_S3_BUCKET または BACKUP_DIR を設定してください")
+            return {
+                "status": "error",
+                "reason": "no_backup_config",
+                "path": full_path,
+            }
 
     # .detect/ フォルダパス
     dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
 
-    # バナーは first file (branch_no=1) のみ
-    # - First file: .detect/ = mask + banner, original = banner only
-    # - Other files: .detect/ = mask only (no banner), original = unchanged
-    # - force_overlay=True: 元画像に直接バナーのみ上書き（.detect/やbackup処理なし）
+    # バナーの判定（通常モード用）:
+    # - First file (branch_no=1) のみバナー追加
+    # - --force / --force-overlay は別処理
     add_banner_to_detect = is_first_image
 
     # 処理実行（Two-Stage: Seg + Pose）
@@ -828,12 +816,65 @@ def backup_and_process(
             logger.debug(f"Force overlay完了: {full_path}")
             return result
 
+        # === --force モード: .detect/にバナーのみ（マスクなし）で上書き ===
+        if force:
+            logger.debug(
+                f"Force: .detect/にバナーのみ上書き (masking=False, banner=True)"
+            )
+
+            if BACKUP_S3_BUCKET:
+                import tempfile
+
+                with tempfile.NamedTemporaryFile(
+                    suffix=os.path.splitext(file_name)[1], delete=False
+                ) as tmp:
+                    temp_detect_path = tmp.name
+
+                result = process_image(
+                    input_path=full_path,
+                    output_path=temp_detect_path,
+                    seg_model=seg_model,
+                    pose_model=pose_model,
+                    mask_image=mask_image,
+                    is_masking=False,  # マスクなし（バナーのみ）
+                    add_banner=True,  # バナーあり
+                )
+
+                detect_s3_key = f"webroot/{dir_part}/.detect/{file_name}"
+                s3_upload_backup(temp_detect_path, detect_s3_key)
+                logger.debug(
+                    f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
+                )
+                os.unlink(temp_detect_path)
+                detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
+            else:
+                detect_dir = os.path.join(os.path.dirname(full_path), ".detect")
+                detect_output_path = os.path.join(detect_dir, file_name)
+                os.makedirs(detect_dir, exist_ok=True)
+
+                result = process_image(
+                    input_path=full_path,
+                    output_path=detect_output_path,
+                    seg_model=seg_model,
+                    pose_model=pose_model,
+                    mask_image=mask_image,
+                    is_masking=False,  # マスクなし（バナーのみ）
+                    add_banner=True,  # バナーあり
+                )
+
+            result["status"] = "success"
+            result["output_path"] = detect_output_path
+            result["is_first"] = is_first_image
+            result["force"] = True
+            logger.debug(f"Force完了: {detect_output_path}")
+            return result
+
         # === 通常モード: .detect/ にマスク版を保存 ===
-        # .detect/ファイルが既に存在するかチェック（--forceで上書き可能）
+        # .detect/ファイルが既に存在するかチェック
         detect_check_path = os.path.join(
             os.path.dirname(full_path), ".detect", file_name
         )
-        if not force and os.path.exists(detect_check_path):
+        if os.path.exists(detect_check_path):
             logger.debug(f".detect/既存のためスキップ: {detect_check_path}")
             return {
                 "status": "skip",
@@ -895,18 +936,10 @@ def backup_and_process(
             )
 
         # === First fileのみ: 元ファイルにバナーのみ版を上書き ===
-        if is_first_image:
+        # --force モードでは元ファイルを変更しない（.detect/のみ更新）
+        # 注意: 元画像をそのまま使用（復元が必要なら手動でrestore_from_backup.pyを実行）
+        if is_first_image and not force:
             logger.debug(f"First file: 元ファイルにバナーのみ版を上書き")
-            # バックアップから復元してからバナーのみ適用
-            if BACKUP_S3_BUCKET:
-                dir_part = os.path.dirname(relative_path)
-                s3_key = f"webroot/{dir_part}/.backup/{file_name}"
-                s3_download_backup(s3_key, full_path)
-            elif BACKUP_DIR:
-                backup_path = os.path.join(BACKUP_DIR, relative_path)
-                if os.path.exists(backup_path):
-                    shutil.copy(backup_path, full_path)
-
             # バナーのみ版を元ファイルに保存
             process_image(
                 input_path=full_path,
@@ -921,7 +954,7 @@ def backup_and_process(
         result["status"] = "success"
         result["output_path"] = detect_output_path
         result["is_first"] = is_first_image
-        if is_first_image:
+        if is_first_image and not force:
             result["original_output"] = full_path  # First fileは元ファイルも更新
 
         # バックアップパス情報
