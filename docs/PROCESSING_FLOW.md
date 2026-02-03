@@ -168,6 +168,102 @@ Environment variables:
 - `BACKUP_S3_BUCKET`: S3 bucket for backup via boto3 (e.g., `cs1es3`)
 - `BACKUP_S3_PREFIX`: Backup folder name (default: `.backup`)
 
+---
+
+## Tracking File Design
+
+### File Location
+```
+{LOG_DIR}/tracking/processed_YYYYMMDD.json
+```
+Ví dụ: `logs/tracking/processed_20260203.json`
+
+### File Structure
+```json
+{
+  "date": "2026-02-03",
+  "created_at": "2026-02-03T00:00:00",
+  "last_processed_time": "2026-02-03T15:30:00",
+  "processed": {
+    "12345": {
+      "file_id": 12345,
+      "path": "/upfile/1041/8430/10418430001.jpg",
+      "branch_no": 1,
+      "processed_at": "2026-02-03 10:30:00",
+      "status": "success",
+      "detections": 2,
+      "is_first": true
+    },
+    "12346": {
+      "file_id": 12346,
+      "path": "/upfile/1041/8430/10418430002.jpg",
+      "branch_no": 2,
+      "processed_at": "2026-02-03 10:30:05",
+      "status": "success",
+      "detections": 1,
+      "is_first": false
+    },
+    "12347": {
+      "file_id": 12347,
+      "path": "/upfile/1041/8430/10418430003.jpg",
+      "branch_no": 3,
+      "processed_at": "2026-02-03 10:30:10",
+      "status": "error",
+      "detections": 0,
+      "is_first": false,
+      "error": "file_not_found"
+    }
+  }
+}
+```
+
+### Field Definitions
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `date` | string | Yes | Ngày xử lý (ISO format) |
+| `created_at` | string | Yes | Thời gian tạo file tracking |
+| `last_processed_time` | string | No | Thời gian xử lý cuối (dùng cho incremental fetch) |
+| `processed` | object | Yes | Map của file_id -> record |
+
+### Record Fields
+
+| Field | Type | Required | Description | Used by Restore |
+|-------|------|----------|-------------|-----------------|
+| `file_id` | int | Yes | ID trong database | No |
+| `path` | string | Yes | Đường dẫn relative (e.g., `/upfile/1041/8430/xxx.jpg`) | **YES** - để xác định file cần restore |
+| `branch_no` | int/null | Yes | Số thứ tự ảnh trong xe | No (debug only) |
+| `processed_at` | string | Yes | Thời gian xử lý | No |
+| `status` | string | Yes | `success` / `error` / `skip` | **YES** - để filter |
+| `detections` | int | No | Số biển số phát hiện | No |
+| `is_first` | bool | Yes | Có phải ảnh đầu tiên không | No |
+| `error` | string | No | Lý do lỗi (nếu status=error) | No |
+
+### Restore Script Usage
+
+`restore_from_backup.py` sử dụng tracking file để:
+
+1. **Lấy danh sách files cần restore** từ `processed` object
+2. **Filter theo status**: `--status success` / `--status error` / `--status all`
+3. **Filter theo car_id**: Extract từ `path` field
+4. **Xác định backup path**: Từ `path` field → tính ra `.backup/` location
+
+```python
+# Restore script chỉ dùng 2 fields:
+path = record.get("path", "")      # Required
+status = record.get("status", "")  # Optional filter
+```
+
+### Rules
+
+1. **Mỗi ngày có 1 tracking file riêng** - không ghi đè ngày khác
+2. **file_id là unique key** - mỗi file chỉ có 1 record
+3. **Không xóa records** - chỉ thêm mới hoặc update
+4. **path field là critical** - restore script phụ thuộc vào field này
+5. **last_processed_time** - dùng cho incremental DB fetch, giảm load
+
+---
+
 ## Scripts
 
 | Script                   | Purpose                         |
