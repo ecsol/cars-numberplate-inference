@@ -592,7 +592,9 @@ def get_images_from_path(folder_path: str) -> list:
 
 
 def get_images_by_date(
-    target_date: datetime.date, last_fetch_time: Optional[datetime] = None
+    target_date: datetime.date,
+    last_fetch_time: Optional[datetime] = None,
+    only_first: bool = False,
 ) -> list:
     """
     指定日に作成/更新された画像を取得
@@ -600,14 +602,18 @@ def get_images_by_date(
     Args:
         target_date: 対象日
         last_fetch_time: この時刻以降に作成/更新された画像のみ取得（増分取得でDB負荷軽減）
+        only_first: Trueの場合、branch_no=1のみ取得（--force-overlay用）
 
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
     """
 
+    # branch_no=1のみ取得する条件
+    branch_condition = "AND branch_no = 1" if only_first else ""
+
     if last_fetch_time:
         # 増分取得: last_fetch_time以降の新規/更新ファイルのみ
-        query = """
+        query = f"""
             SELECT 
                 id,
                 car_cd,
@@ -622,6 +628,7 @@ def get_images_by_date(
               AND delete_flg = 0
               AND save_file_name IS NOT NULL
               AND save_file_name != ''
+              {branch_condition}
             ORDER BY 
                 COALESCE(inspresultdata_cd, car_cd::text),
                 branch_no ASC
@@ -629,7 +636,7 @@ def get_images_by_date(
         params = (target_date, target_date, last_fetch_time, last_fetch_time)
     else:
         # 初回: 全件取得
-        query = """
+        query = f"""
             SELECT 
                 id,
                 car_cd,
@@ -643,6 +650,7 @@ def get_images_by_date(
               AND delete_flg = 0
               AND save_file_name IS NOT NULL
               AND save_file_name != ''
+              {branch_condition}
             ORDER BY 
                 COALESCE(inspresultdata_cd, car_cd::text),
                 branch_no ASC
@@ -1117,7 +1125,9 @@ def main():
 
         # 画像を取得
         images = get_images_by_date(
-            target_date=target_date, last_fetch_time=last_fetch_time
+            target_date=target_date,
+            last_fetch_time=last_fetch_time,
+            only_first=args.force_overlay,  # --force-overlayの場合はbranch_no=1のみ
         )
 
         if not images:
