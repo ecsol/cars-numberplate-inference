@@ -682,6 +682,7 @@ def backup_and_process(
     file_path: str,
     is_first_image: bool = False,
     force_overlay: bool = False,
+    force: bool = False,
 ) -> dict:
     """
     画像をバックアップして処理
@@ -695,6 +696,7 @@ def backup_and_process(
         file_path: S3上のファイルパス (例: /upfile/1007/4856/20220824190333_1.jpg)
         is_first_image: 最初の画像かどうか (True=バナー追加)
         force_overlay: 強制的にバナーを追加するか
+        force: .detect/が存在しても強制的に再処理
 
     Returns:
         dict: 処理結果
@@ -827,6 +829,19 @@ def backup_and_process(
             return result
 
         # === 通常モード: .detect/ にマスク版を保存 ===
+        # .detect/ファイルが既に存在するかチェック（--forceで上書き可能）
+        detect_check_path = os.path.join(
+            os.path.dirname(full_path), ".detect", file_name
+        )
+        if not force and os.path.exists(detect_check_path):
+            logger.debug(f".detect/既存のためスキップ: {detect_check_path}")
+            return {
+                "status": "skip",
+                "reason": "detect_exists",
+                "path": full_path,
+                "detect_path": detect_check_path,
+            }
+
         logger.debug(
             f"Two-Stage推論開始: .detect/ 出力 (masking=True, banner={add_banner_to_detect})"
         )
@@ -1043,6 +1058,11 @@ def main():
         action="store_true",
         help="全画像にバナーを強制適用 (デフォルト: 先頭画像のみ)",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help=".detect/が存在しても強制的に再処理",
+    )
 
     args = parser.parse_args()
 
@@ -1220,6 +1240,7 @@ def main():
                 file_path=file_info["path"],
                 is_first_image=is_first,
                 force_overlay=args.force_overlay,
+                force=args.force,
             )
 
             status = result.get("status", "error")
