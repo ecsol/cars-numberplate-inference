@@ -1009,8 +1009,8 @@ def main():
                 processed_count += 1
                 car_success += 1
                 car_detections += result.get("detections", 0)
-                # 最初に処理成功した画像のパスを記録
-                if car_first_image_path is None:
+                # branch_no=1の画像パスを記録（バナー付きの代表画像）
+                if file_info["branch_no"] == 1:
                     car_first_image_path = file_info["path"]
 
                 # トラッキングに記録
