@@ -537,14 +537,19 @@ def load_models():
 # ======================
 def get_images_from_path(folder_path: str) -> list:
     """
-    指定フォルダから画像ファイルを取得（DBをバイパス）
+    指定フォルダから画像ファイルを取得（DBからbranch_noを取得）
+
+    【重要】branch_noは必ずDBから取得する（ファイル名から推測しない）
 
     Args:
         folder_path: フォルダパス (例: /1554913G または 1554913G)
 
     Returns:
-        list: [(idx, None, car_id, branch_no, path, None, None), ...]
+        list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
               get_images_by_dateと同じ形式で返す
+    
+    Note:
+        DBに存在しないファイルはスキップされる
     """
     # パスを正規化
     folder_path = folder_path.strip("/")
@@ -557,11 +562,11 @@ def get_images_from_path(folder_path: str) -> list:
     # car_id を抽出（フォルダ名）
     car_id = os.path.basename(folder_path)
 
-    # 画像ファイルを取得
-    images = []
+    # ファイルシステムから画像ファイル一覧を取得（存在確認用）
     image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    file_names = []
 
-    for idx, file_name in enumerate(sorted(os.listdir(full_folder_path)), start=1):
+    for file_name in sorted(os.listdir(full_folder_path)):
         file_path = os.path.join(full_folder_path, file_name)
 
         # ファイルのみ、画像拡張子のみ
@@ -576,28 +581,56 @@ def get_images_from_path(folder_path: str) -> list:
         if ".backup" in file_path or ".detect" in file_path:
             continue
 
-        # branch_noをファイル名から推測（末尾の数字）
-        # 例: 1554913G133.jpg → branch_no = 1 (最初の画像)
-        # ソート順で決定: idx=1 が branch_no=1
-        branch_no = idx
+        file_names.append(file_name)
 
-        # DBと同じ形式: /upfile/car_id/filename.jpg
-        relative_path = f"/upfile/{folder_path}/{file_name}"
+    if not file_names:
+        logger.info(f"フォルダスキャン: {full_folder_path} - 画像なし")
+        return []
 
-        images.append(
-            (
-                idx,  # id (ダミー)
-                None,  # car_cd
-                car_id,  # inspresultdata_cd
-                branch_no,  # branch_no
-                relative_path,  # save_file_name
-                None,  # created
-                None,  # modified
-            )
+    # DBからbranch_noを取得（絶対にファイル名から推測しない！）
+    # save_file_nameは /upfile/car_id/filename.jpg 形式
+    like_pattern = f"/upfile/{folder_path}/%"
+    
+    query = """
+        SELECT 
+            id,
+            car_cd,
+            inspresultdata_cd,
+            branch_no,
+            save_file_name,
+            created,
+            modified
+        FROM upload_files
+        WHERE save_file_name LIKE %s
+          AND delete_flg = 0
+        ORDER BY branch_no ASC
+    """
+    
+    try:
+        conn = psycopg2.connect(**DB_CONFIG)
+        cur = conn.cursor()
+        cur.execute(query, (like_pattern,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        
+        # DBの結果をそのまま返す（branch_noはDBの値を使用）
+        logger.info(
+            f"フォルダスキャン: {full_folder_path} - "
+            f"ファイル{len(file_names)}枚, DB登録{len(rows)}件"
         )
-
-    logger.info(f"フォルダスキャン: {full_folder_path} - {len(images)}枚")
-    return images
+        
+        if len(rows) != len(file_names):
+            logger.warning(
+                f"ファイル数とDB登録数が一致しません: "
+                f"ファイル={len(file_names)}, DB={len(rows)}"
+            )
+        
+        return rows
+        
+    except Exception as e:
+        logger.error(f"DB接続エラー: {e}")
+        return []
 
 
 def get_images_by_date(
