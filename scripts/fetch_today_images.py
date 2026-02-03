@@ -547,7 +547,7 @@ def get_images_from_path(folder_path: str) -> list:
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
               get_images_by_dateと同じ形式で返す
-    
+
     Note:
         DBに存在しないファイルはスキップされる
     """
@@ -588,9 +588,16 @@ def get_images_from_path(folder_path: str) -> list:
         return []
 
     # DBからbranch_noを取得（絶対にファイル名から推測しない！）
-    # save_file_nameは /upfile/car_id/filename.jpg 形式
+    # フォルダIDには2種類ある:
+    #   1. car_cd形式: 1041/9302 (数値/数値)
+    #   2. inspresultdata_cd形式: 1555316G (英数字)
+    # 両方のパターンで検索する
     like_pattern = f"/upfile/{folder_path}/%"
     
+    # inspresultdata_cdの場合はフォルダ名がそのままID
+    # car_cdの場合はフォルダ名の最後の部分がID (例: 1041/9302 → 9302)
+    folder_id = os.path.basename(folder_path)
+
     query = """
         SELECT 
             id,
@@ -601,33 +608,33 @@ def get_images_from_path(folder_path: str) -> list:
             created,
             modified
         FROM upload_files
-        WHERE save_file_name LIKE %s
+        WHERE (save_file_name LIKE %s OR inspresultdata_cd = %s)
           AND delete_flg = 0
         ORDER BY branch_no ASC
     """
-    
+
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
-        cur.execute(query, (like_pattern,))
+        cur.execute(query, (like_pattern, folder_id))
         rows = cur.fetchall()
         cur.close()
         conn.close()
-        
+
         # DBの結果をそのまま返す（branch_noはDBの値を使用）
         logger.info(
             f"フォルダスキャン: {full_folder_path} - "
             f"ファイル{len(file_names)}枚, DB登録{len(rows)}件"
         )
-        
+
         if len(rows) != len(file_names):
             logger.warn(
                 f"ファイル数とDB登録数が一致しません: "
                 f"ファイル={len(file_names)}, DB={len(rows)}"
             )
-        
+
         return rows
-        
+
     except Exception as e:
         logger.error(f"DB接続エラー: {e}")
         return []
@@ -1437,7 +1444,9 @@ def main():
 
             # branch_no == 1 のみ first file として扱う
             is_first = file_info["branch_no"] == 1
-            logger.debug(f"branch_no={file_info['branch_no']} (type={type(file_info['branch_no']).__name__}), is_first={is_first}")
+            logger.debug(
+                f"branch_no={file_info['branch_no']} (type={type(file_info['branch_no']).__name__}), is_first={is_first}"
+            )
 
             # 処理実行
             result = backup_and_process(
