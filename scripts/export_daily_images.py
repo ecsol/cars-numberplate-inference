@@ -50,15 +50,13 @@ DB_CONFIG = {
     "password": os.getenv("DB_PASSWORD", ""),
 }
 
-IMAGE_BASE_URL = os.getenv(
-    "IMAGE_BASE_URL", "https://www.autobacs-cars-system.com"
-)
+IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "https://www.autobacs-cars-system.com")
 
 
 def get_images_by_date(target_date) -> list:
     """
     指定日に作成/更新された画像を取得
-    
+
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
     """
@@ -100,7 +98,7 @@ def get_images_by_date(target_date) -> list:
 def build_car_structure(images: list, target_date) -> dict:
     """
     画像リストを車両ごとの構造に変換
-    
+
     Returns:
         dict: {
             "date": "2026-02-03",
@@ -120,13 +118,15 @@ def build_car_structure(images: list, target_date) -> dict:
             }
         }
     """
-    cars = defaultdict(lambda: {
-        "car_cd": None,
-        "inspresultdata_cd": None,
-        "total_images": 0,
-        "images": []
-    })
-    
+    cars = defaultdict(
+        lambda: {
+            "car_cd": None,
+            "inspresultdata_cd": None,
+            "total_images": 0,
+            "images": [],
+        }
+    )
+
     for row in images:
         (
             file_id,
@@ -137,33 +137,35 @@ def build_car_structure(images: list, target_date) -> dict:
             created,
             modified,
         ) = row
-        
+
         # car_keyを決定
         car_key = inspresultdata_cd if inspresultdata_cd else str(car_cd)
-        
+
         # 画像情報を追加
         cars[car_key]["car_cd"] = str(car_cd) if car_cd else None
         cars[car_key]["inspresultdata_cd"] = inspresultdata_cd
         cars[car_key]["total_images"] += 1
-        cars[car_key]["images"].append({
-            "branch_no": branch_no,
-            "path": save_file_name,
-            "url": f"{IMAGE_BASE_URL}{save_file_name}",
-            "filename": os.path.basename(save_file_name),
-            "file_id": file_id,
-        })
-    
+        cars[car_key]["images"].append(
+            {
+                "branch_no": branch_no,
+                "path": save_file_name,
+                "url": f"{IMAGE_BASE_URL}{save_file_name}",
+                "filename": os.path.basename(save_file_name),
+                "file_id": file_id,
+            }
+        )
+
     # branch_noでソート
     for car_key in cars:
         cars[car_key]["images"].sort(key=lambda x: x["branch_no"] or 999)
-    
+
     return {
         "date": str(target_date),
         "exported_at": datetime.now().isoformat(),
         "total_cars": len(cars),
         "total_images": len(images),
         "image_base_url": IMAGE_BASE_URL,
-        "cars": dict(cars)
+        "cars": dict(cars),
     }
 
 
@@ -204,9 +206,9 @@ def main():
         default=None,
         help="特定の車両IDのみ出力",
     )
-    
+
     args = parser.parse_args()
-    
+
     # 対象日を計算
     if args.date:
         try:
@@ -216,13 +218,13 @@ def main():
             return 1
     else:
         target_date = datetime.now().date() - timedelta(days=args.days_ago)
-    
+
     # 出力ファイル名
     if args.output:
         output_file = args.output
     else:
         output_file = f"images_{target_date.strftime('%Y%m%d')}.json"
-    
+
     print("=" * 60)
     print(f"車両画像エクスポート")
     print(f"  対象日: {target_date}")
@@ -230,17 +232,17 @@ def main():
     if args.car_id:
         print(f"  車両ID: {args.car_id}")
     print("=" * 60)
-    
+
     # 画像を取得
     images = get_images_by_date(target_date)
-    
+
     if not images:
         print(f"[INFO] {target_date} の画像はありません")
         return 0
-    
+
     # 構造化
     result = build_car_structure(images, target_date)
-    
+
     # 特定車両のみフィルタ
     if args.car_id:
         if args.car_id in result["cars"]:
@@ -251,25 +253,25 @@ def main():
         else:
             print(f"[ERROR] 車両ID '{args.car_id}' が見つかりません")
             return 1
-    
+
     # JSON出力
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
-    
+
     print("=" * 60)
     print(f"[OK] エクスポート完了")
     print(f"  車両数: {result['total_cars']}台")
     print(f"  画像数: {result['total_images']}枚")
     print(f"  出力先: {output_file}")
     print("=" * 60)
-    
+
     # サマリー表示
     print("\n[車両一覧]")
     for car_id, car_info in list(result["cars"].items())[:20]:
         print(f"  {car_id}: {car_info['total_images']}枚")
     if len(result["cars"]) > 20:
         print(f"  ... 他 {len(result['cars']) - 20}台")
-    
+
     return 0
 
 
