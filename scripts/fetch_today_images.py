@@ -202,14 +202,15 @@ def build_processing_summary(
                 )
 
             # 全画像のURLをbranch_no順で表示（オリジナル + .detect/マスク済み）
-            for branch_no, path in car_images:
+            # branch_noではなく連番で表示（1から開始）
+            for seq_no, (branch_no, path) in enumerate(car_images, start=1):
                 dir_path = os.path.dirname(path)
                 file_name = os.path.basename(path)
                 # オリジナルURL
                 original_url = f"{IMAGE_BASE_URL}{path}"
                 # マスク済みURL (.detect/)
                 detect_url = f"{IMAGE_BASE_URL}{dir_path}/.detect/{file_name}"
-                lines.append(f"  {branch_no}. 元: {original_url}")
+                lines.append(f"  {seq_no}. 元: {original_url}")
                 lines.append(f"     検: {detect_url}")
             lines.append("")
 
