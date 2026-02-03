@@ -792,8 +792,12 @@ def backup_and_process(
             if not is_first_image:
                 # branch_no != 1 はスキップ
                 logger.debug(f"Force overlay: スキップ (branch_no != 1)")
-                return {"status": "skip", "reason": "force_overlay_not_first", "path": full_path}
-            
+                return {
+                    "status": "skip",
+                    "reason": "force_overlay_not_first",
+                    "path": full_path,
+                }
+
             logger.debug(
                 f"Force overlay: 元画像にバナーのみ上書き (masking=False, banner=True)"
             )
@@ -1098,13 +1102,18 @@ def main():
         )
 
         # 最後のDB取得時刻を取得（増分取得でDB負荷軽減）
-        last_fetch_time = tracker.get_last_processed_time(target_date)
-        if last_fetch_time:
-            logger.info(
-                f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル"
-            )
+        # --force-overlay の場合は増分取得をスキップして全件取得
+        if args.force_overlay:
+            last_fetch_time = None
+            logger.info("--force-overlay: 全件取得モード")
         else:
-            logger.info("初回実行: 全件取得")
+            last_fetch_time = tracker.get_last_processed_time(target_date)
+            if last_fetch_time:
+                logger.info(
+                    f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル"
+                )
+            else:
+                logger.info("初回実行: 全件取得")
 
         # 画像を取得
         images = get_images_by_date(
@@ -1170,7 +1179,11 @@ def main():
         car_dir = os.path.dirname(first_file_path) + "/"  # /upfile/1041/8430/
 
         # --path または --force-overlay モードではトラッキングチェックをスキップ（明示的な再処理）
-        if not args.path and not args.force_overlay and tracker.has_car_any_processed(target_date, car_dir):
+        if (
+            not args.path
+            and not args.force_overlay
+            and tracker.has_car_any_processed(target_date, car_dir)
+        ):
             stats["skip_tracked"] += len(car_files)
             logger.debug(f"車両スキップ（処理中）: {car_key} (フォルダ: {car_dir})")
             continue
@@ -1227,7 +1240,9 @@ def main():
             elif status == "skip":
                 # --force-overlay で branch_no != 1 の場合などスキップ
                 stats["skipped"] = stats.get("skipped", 0) + 1
-                logger.debug(f"スキップ: {file_info['path']} - {result.get('reason', 'skip')}")
+                logger.debug(
+                    f"スキップ: {file_info['path']} - {result.get('reason', 'skip')}"
+                )
 
             elif status == "error":
                 stats["error"] += 1
