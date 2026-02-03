@@ -201,13 +201,16 @@ def build_processing_summary(
                     f"{status_icon} {car_id}: {success}枚処理, 検出{detections}件"
                 )
 
-            # 全画像のURLをbranch_no順で表示（.detect/のマスク済み画像）
+            # 全画像のURLをbranch_no順で表示（オリジナル + .detect/マスク済み）
             for branch_no, path in car_images:
-                # /upfile/xxx/yyy/image.jpg -> /upfile/xxx/yyy/.detect/image.jpg
                 dir_path = os.path.dirname(path)
                 file_name = os.path.basename(path)
+                # オリジナルURL
+                original_url = f"{IMAGE_BASE_URL}{path}"
+                # マスク済みURL (.detect/)
                 detect_url = f"{IMAGE_BASE_URL}{dir_path}/.detect/{file_name}"
-                lines.append(f"  {branch_no}. {detect_url}")
+                lines.append(f"  {branch_no}. 元: {original_url}")
+                lines.append(f"     検: {detect_url}")
             lines.append("")
 
         if len(car_results) > 10:
@@ -523,10 +526,10 @@ def load_models():
 def get_images_from_path(folder_path: str) -> list:
     """
     指定フォルダから画像ファイルを取得（DBをバイパス）
-    
+
     Args:
         folder_path: フォルダパス (例: /1554913G または 1554913G)
-    
+
     Returns:
         list: [(idx, None, car_id, branch_no, path, None, None), ...]
               get_images_by_dateと同じ形式で返す
@@ -534,51 +537,53 @@ def get_images_from_path(folder_path: str) -> list:
     # パスを正規化
     folder_path = folder_path.strip("/")
     full_folder_path = os.path.join(S3_MOUNT, "upfile", folder_path)
-    
+
     if not os.path.exists(full_folder_path):
         logger.error(f"フォルダが存在しません: {full_folder_path}")
         return []
-    
+
     # car_id を抽出（フォルダ名）
     car_id = os.path.basename(folder_path)
-    
+
     # 画像ファイルを取得
     images = []
     image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
-    
+
     for idx, file_name in enumerate(sorted(os.listdir(full_folder_path)), start=1):
         file_path = os.path.join(full_folder_path, file_name)
-        
+
         # ファイルのみ、画像拡張子のみ
         if not os.path.isfile(file_path):
             continue
-        
+
         _, ext = os.path.splitext(file_name)
         if ext.lower() not in image_extensions:
             continue
-        
+
         # .backup, .detect フォルダ内はスキップ
         if ".backup" in file_path or ".detect" in file_path:
             continue
-        
+
         # branch_noをファイル名から推測（末尾の数字）
         # 例: 1554913G133.jpg → branch_no = 1 (最初の画像)
         # ソート順で決定: idx=1 が branch_no=1
         branch_no = idx
-        
+
         # DBと同じ形式: /upfile/car_id/filename.jpg
         relative_path = f"/upfile/{folder_path}/{file_name}"
-        
-        images.append((
-            idx,           # id (ダミー)
-            None,          # car_cd
-            car_id,        # inspresultdata_cd
-            branch_no,     # branch_no
-            relative_path, # save_file_name
-            None,          # created
-            None,          # modified
-        ))
-    
+
+        images.append(
+            (
+                idx,  # id (ダミー)
+                None,  # car_cd
+                car_id,  # inspresultdata_cd
+                branch_no,  # branch_no
+                relative_path,  # save_file_name
+                None,  # created
+                None,  # modified
+            )
+        )
+
     logger.info(f"フォルダスキャン: {full_folder_path} - {len(images)}枚")
     return images
 
@@ -1042,7 +1047,7 @@ def main():
         # フォルダ直接指定モード（DBバイパス）
         logger.info(f"フォルダ直接モード: {args.path}")
         images = get_images_from_path(args.path)
-        
+
         if not images:
             logger.info(f"フォルダに画像がありません: {args.path}")
             return
