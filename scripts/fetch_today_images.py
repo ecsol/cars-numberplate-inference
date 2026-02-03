@@ -787,9 +787,16 @@ def backup_and_process(
 
     # 処理実行（Two-Stage: Seg + Pose）
     try:
-        # === --force-overlay モード: 元画像に直接バナーのみ上書き ===
+        # === --force-overlay モード: branch_no=1のみ元画像に直接バナー上書き ===
         if force_overlay:
-            logger.debug(f"Force overlay: 元画像にバナーのみ上書き (masking=False, banner=True)")
+            if not is_first_image:
+                # branch_no != 1 はスキップ
+                logger.debug(f"Force overlay: スキップ (branch_no != 1)")
+                return {"status": "skip", "reason": "force_overlay_not_first", "path": full_path}
+            
+            logger.debug(
+                f"Force overlay: 元画像にバナーのみ上書き (masking=False, banner=True)"
+            )
             result = process_image(
                 input_path=full_path,
                 output_path=full_path,
@@ -1162,8 +1169,8 @@ def main():
         first_file_path = car_files[0]["path"]
         car_dir = os.path.dirname(first_file_path) + "/"  # /upfile/1041/8430/
 
-        # --path モードではトラッキングチェックをスキップ（明示的な再処理）
-        if not args.path and tracker.has_car_any_processed(target_date, car_dir):
+        # --path または --force-overlay モードではトラッキングチェックをスキップ（明示的な再処理）
+        if not args.path and not args.force_overlay and tracker.has_car_any_processed(target_date, car_dir):
             stats["skip_tracked"] += len(car_files)
             logger.debug(f"車両スキップ（処理中）: {car_key} (フォルダ: {car_dir})")
             continue
@@ -1198,8 +1205,8 @@ def main():
                 # 処理成功した画像を記録
                 car_images.append((file_info["branch_no"] or 999, file_info["path"]))
 
-                # トラッキングに記録（--pathモードではスキップ）
-                if not args.path:
+                # トラッキングに記録（--path/--force-overlayモードではスキップ）
+                if not args.path and not args.force_overlay:
                     tracker.mark_processed(
                         target_date=target_date,
                         file_id=file_id,
@@ -1217,12 +1224,17 @@ def main():
                     f"バナー: {'あり' if is_first else 'なし'})"
                 )
 
+            elif status == "skip":
+                # --force-overlay で branch_no != 1 の場合などスキップ
+                stats["skipped"] = stats.get("skipped", 0) + 1
+                logger.debug(f"スキップ: {file_info['path']} - {result.get('reason', 'skip')}")
+
             elif status == "error":
                 stats["error"] += 1
                 car_error += 1
 
-                # エラーもトラッキングに記録（--pathモードではスキップ）
-                if not args.path:
+                # エラーもトラッキングに記録（--path/--force-overlayモードではスキップ）
+                if not args.path and not args.force_overlay:
                     tracker.mark_processed(
                         target_date=target_date,
                         file_id=file_id,
