@@ -1165,7 +1165,9 @@ def main():
             }
         )
 
-    logger.info(f"車両数: {len(car_images)}台")
+    total_cars = len(car_images)
+    cars_to_process = min(total_cars, args.limit)
+    logger.info(f"車両数: {total_cars}台 (処理予定: {cars_to_process}台)")
 
     # 処理カウンター
     stats = {"success": 0, "skip_tracked": 0, "skip_other": 0, "error": 0}
@@ -1283,7 +1285,7 @@ def main():
         if car_success > 0 or car_error > 0:
             processed_cars += 1  # 車両カウント
             logger.info(
-                f"[{processed_cars}/{args.limit}台] {car_key}: "
+                f"[{processed_cars}/{cars_to_process}台] {car_key}: "
                 f"{car_success}枚成功, {car_error}枚エラー, 検出{car_detections}件"
             )
             # branch_noでソートしてから記録
