@@ -787,10 +787,22 @@ def backup_and_process(
     # 処理実行（Two-Stage: Seg + Pose）
     try:
         # === --force-overlay モード: branch_no=1のみ元画像に直接バナー上書き ===
+        # ============================================================
+        # --force-overlay モード: 元画像に直接バナーを上書き
+        # ============================================================
+        # 処理内容:
+        #   - branch_no=1 のみ: 元画像にバナーのみ（マスクなし）で上書き
+        #   - branch_no!=1: スキップ（処理しない）
+        # 入力:
+        #   - 現在の元画像（full_path）をそのまま使用
+        # 出力:
+        #   - 元画像を直接上書き
+        #   - .detect/ は作成しない
+        # ============================================================
         if force_overlay:
+            # branch_no=1 以外はスキップ
             if not is_first_image:
-                # branch_no != 1 はスキップ
-                logger.debug(f"Force overlay: スキップ (branch_no != 1)")
+                logger.debug(f"--force-overlay: branch_no!=1 のためスキップ")
                 return {
                     "status": "skip",
                     "reason": "force_overlay_not_first",
@@ -798,7 +810,7 @@ def backup_and_process(
                 }
 
             logger.debug(
-                f"Force overlay: 元画像にバナーのみ上書き (masking=False, banner=True)"
+                f"--force-overlay: 元画像にバナーのみ上書き (masking=False, banner=True)"
             )
             result = process_image(
                 input_path=full_path,
@@ -813,17 +825,52 @@ def backup_and_process(
             result["output_path"] = full_path
             result["is_first"] = is_first_image
             result["force_overlay"] = True
-            logger.debug(f"Force overlay完了: {full_path}")
+            logger.debug(f"--force-overlay完了: {full_path}")
             return result
 
-        # === --force モード: .detect/にバナーのみ（マスクなし）で上書き ===
+        # ============================================================
+        # --force モード: .detect/ を強制再作成（既存ファイルを上書き）
+        # ============================================================
+        # 処理内容:
+        #   - branch_no=1 のみ: .detect/ にバナーのみ（マスクなし）で上書き
+        #   - branch_no!=1: スキップ（処理しない）
+        # 入力:
+        #   - .backup から元画像を取得（検出精度のため）
+        # 出力:
+        #   - .detect/ にバナーのみの画像を保存
+        #   - 元画像は変更しない
+        # ============================================================
         if force:
+            # branch_no=1 以外はスキップ
+            if not is_first_image:
+                logger.debug(f"--force: branch_no!=1 のためスキップ")
+                return {
+                    "status": "skip",
+                    "reason": "force_not_first",
+                    "path": full_path,
+                }
+
             logger.debug(
-                f"Force: .detect/にバナーのみ上書き (masking=False, banner=True)"
+                f"--force: .detect/にバナーのみ上書き (masking=False, banner=True)"
             )
 
             if BACKUP_S3_BUCKET:
                 import tempfile
+
+                # .backupから元画像をダウンロード（検出精度のため）
+                backup_s3_key = f"webroot/{dir_part}/.backup/{file_name}"
+                with tempfile.NamedTemporaryFile(
+                    suffix=os.path.splitext(file_name)[1], delete=False
+                ) as tmp:
+                    temp_input_path = tmp.name
+
+                if s3_backup_exists(backup_s3_key):
+                    s3_download_backup(backup_s3_key, temp_input_path)
+                    logger.debug(f"バックアップから入力: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}")
+                else:
+                    # バックアップがない場合は現在の画像を使用
+                    logger.warn(f"バックアップなし、現在の画像を使用: {full_path}")
+                    shutil.copy(full_path, temp_input_path)
 
                 with tempfile.NamedTemporaryFile(
                     suffix=os.path.splitext(file_name)[1], delete=False
@@ -831,7 +878,7 @@ def backup_and_process(
                     temp_detect_path = tmp.name
 
                 result = process_image(
-                    input_path=full_path,
+                    input_path=temp_input_path,
                     output_path=temp_detect_path,
                     seg_model=seg_model,
                     pose_model=pose_model,
@@ -845,15 +892,25 @@ def backup_and_process(
                 logger.debug(
                     f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
                 )
+                os.unlink(temp_input_path)
                 os.unlink(temp_detect_path)
                 detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
             else:
+                # ローカルバックアップから入力
+                backup_path = os.path.join(BACKUP_DIR, relative_path) if BACKUP_DIR else None
+                if backup_path and os.path.exists(backup_path):
+                    input_path = backup_path
+                    logger.debug(f"バックアップから入力: {backup_path}")
+                else:
+                    input_path = full_path
+                    logger.warn(f"バックアップなし、現在の画像を使用: {full_path}")
+
                 detect_dir = os.path.join(os.path.dirname(full_path), ".detect")
                 detect_output_path = os.path.join(detect_dir, file_name)
                 os.makedirs(detect_dir, exist_ok=True)
 
                 result = process_image(
-                    input_path=full_path,
+                    input_path=input_path,
                     output_path=detect_output_path,
                     seg_model=seg_model,
                     pose_model=pose_model,
@@ -866,10 +923,23 @@ def backup_and_process(
             result["output_path"] = detect_output_path
             result["is_first"] = is_first_image
             result["force"] = True
-            logger.debug(f"Force完了: {detect_output_path}")
+            logger.debug(f"--force完了: {detect_output_path}")
             return result
 
-        # === 通常モード: .detect/ にマスク版を保存 ===
+        # ============================================================
+        # 通常モード: 新規画像を処理
+        # ============================================================
+        # 処理内容:
+        #   - branch_no=1: .detect/ にマスク+バナー、元画像にバナーのみ
+        #   - branch_no!=1: .detect/ にマスクのみ（バナーなし）、元画像は変更しない
+        # 入力:
+        #   - .backup から元画像を取得（検出精度のため）
+        # 出力:
+        #   - .detect/ にマスク処理済み画像を保存
+        #   - branch_no=1 のみ元画像にバナー追加
+        # 条件:
+        #   - .detect/ が既に存在する場合はスキップ
+        # ============================================================
         # .detect/ファイルが既に存在するかチェック
         detect_check_path = os.path.join(
             os.path.dirname(full_path), ".detect", file_name
@@ -892,6 +962,21 @@ def backup_and_process(
         if BACKUP_S3_BUCKET:
             import tempfile
 
+            # .backupから元画像をダウンロード（検出精度のため）
+            backup_s3_key = f"webroot/{dir_part}/.backup/{file_name}"
+            with tempfile.NamedTemporaryFile(
+                suffix=os.path.splitext(file_name)[1], delete=False
+            ) as tmp:
+                temp_input_path = tmp.name
+
+            if s3_backup_exists(backup_s3_key):
+                s3_download_backup(backup_s3_key, temp_input_path)
+                logger.debug(f"バックアップから入力: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}")
+            else:
+                # バックアップがない場合は現在の画像を使用
+                logger.warn(f"バックアップなし、現在の画像を使用: {full_path}")
+                shutil.copy(full_path, temp_input_path)
+
             # 一時ファイルに出力
             with tempfile.NamedTemporaryFile(
                 suffix=os.path.splitext(file_name)[1], delete=False
@@ -899,7 +984,7 @@ def backup_and_process(
                 temp_detect_path = tmp.name
 
             result = process_image(
-                input_path=full_path,
+                input_path=temp_input_path,
                 output_path=temp_detect_path,
                 seg_model=seg_model,
                 pose_model=pose_model,
@@ -915,18 +1000,41 @@ def backup_and_process(
                 f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
             )
 
+            # First fileのみ: 元ファイルにバナーのみ版を上書き
+            if is_first_image:
+                logger.debug(f"First file: 元ファイルにバナーのみ版を上書き")
+                process_image(
+                    input_path=temp_input_path,
+                    output_path=full_path,
+                    seg_model=seg_model,
+                    pose_model=pose_model,
+                    mask_image=mask_image,
+                    is_masking=False,  # マスクなし
+                    add_banner=True,  # バナーあり
+                )
+
             # 一時ファイル削除
+            os.unlink(temp_input_path)
             os.unlink(temp_detect_path)
 
             detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
         else:
+            # ローカルバックアップから入力
+            backup_path = os.path.join(BACKUP_DIR, relative_path) if BACKUP_DIR else None
+            if backup_path and os.path.exists(backup_path):
+                input_path = backup_path
+                logger.debug(f"バックアップから入力: {backup_path}")
+            else:
+                input_path = full_path
+                logger.warn(f"バックアップなし、現在の画像を使用: {full_path}")
+
             # ローカルの場合は直接出力
             detect_dir = os.path.join(os.path.dirname(full_path), ".detect")
             detect_output_path = os.path.join(detect_dir, file_name)
             os.makedirs(detect_dir, exist_ok=True)
 
             result = process_image(
-                input_path=full_path,
+                input_path=input_path,
                 output_path=detect_output_path,
                 seg_model=seg_model,
                 pose_model=pose_model,
@@ -935,26 +1043,23 @@ def backup_and_process(
                 add_banner=add_banner_to_detect,  # First fileのみバナー
             )
 
-        # === First fileのみ: 元ファイルにバナーのみ版を上書き ===
-        # --force モードでは元ファイルを変更しない（.detect/のみ更新）
-        # 注意: 元画像をそのまま使用（復元が必要なら手動でrestore_from_backup.pyを実行）
-        if is_first_image and not force:
-            logger.debug(f"First file: 元ファイルにバナーのみ版を上書き")
-            # バナーのみ版を元ファイルに保存
-            process_image(
-                input_path=full_path,
-                output_path=full_path,
-                seg_model=seg_model,
-                pose_model=pose_model,
-                mask_image=mask_image,
-                is_masking=False,  # マスクなし
-                add_banner=True,  # バナーあり
-            )
+            # First fileのみ: 元ファイルにバナーのみ版を上書き
+            if is_first_image:
+                logger.debug(f"First file: 元ファイルにバナーのみ版を上書き")
+                process_image(
+                    input_path=input_path,
+                    output_path=full_path,
+                    seg_model=seg_model,
+                    pose_model=pose_model,
+                    mask_image=mask_image,
+                    is_masking=False,  # マスクなし
+                    add_banner=True,  # バナーあり
+                )
 
         result["status"] = "success"
         result["output_path"] = detect_output_path
         result["is_first"] = is_first_image
-        if is_first_image and not force:
+        if is_first_image:
             result["original_output"] = full_path  # First fileは元ファイルも更新
 
         # バックアップパス情報
