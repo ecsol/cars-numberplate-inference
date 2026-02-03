@@ -178,10 +178,13 @@ def build_processing_summary(
         for car_id, success, error, detections, car_images in car_results[:10]:
             status_icon = "✅" if error == 0 else "⚠️"
             lines.append(f"{status_icon} {car_id}: {success}枚処理, 検出{detections}件")
-            # 全画像のURLをbranch_no順で表示
+            # 全画像のURLをbranch_no順で表示（.detect/のマスク済み画像）
             for branch_no, path in car_images:
-                image_url = f"{IMAGE_BASE_URL}{path}"
-                lines.append(f"  {branch_no}. {image_url}")
+                # /upfile/xxx/yyy/image.jpg -> /upfile/xxx/yyy/.detect/image.jpg
+                dir_path = os.path.dirname(path)
+                file_name = os.path.basename(path)
+                detect_url = f"{IMAGE_BASE_URL}{dir_path}/.detect/{file_name}"
+                lines.append(f"  {branch_no}. {detect_url}")
             lines.append("")
 
         if len(car_results) > 10:
@@ -689,8 +692,11 @@ def backup_and_process(
         # ローカルの場合: 直接.detect/に出力
         if BACKUP_S3_BUCKET:
             import tempfile
+
             # 一時ファイルに出力
-            with tempfile.NamedTemporaryFile(suffix=os.path.splitext(file_name)[1], delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(
+                suffix=os.path.splitext(file_name)[1], delete=False
+            ) as tmp:
                 temp_detect_path = tmp.name
 
             result = process_image(
@@ -706,7 +712,9 @@ def backup_and_process(
             # S3にアップロード
             detect_s3_key = f"webroot/{dir_part}/.detect/{file_name}"
             s3_upload_backup(temp_detect_path, detect_s3_key)
-            logger.debug(f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}")
+            logger.debug(
+                f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
+            )
 
             # 一時ファイル削除
             os.unlink(temp_detect_path)
