@@ -611,8 +611,8 @@ def backup_and_process(
             seg_model=seg_model,
             pose_model=pose_model,
             mask_image=mask_image,
-            is_masking=True,   # マスクあり
-            add_banner=True,   # バナーあり
+            is_masking=True,  # マスクあり
+            add_banner=True,  # バナーあり
         )
 
         # === First fileのみ: 元ファイルにバナーのみ版を上書き ===
@@ -636,7 +636,7 @@ def backup_and_process(
                 pose_model=pose_model,
                 mask_image=mask_image,
                 is_masking=False,  # マスクなし
-                add_banner=True,   # バナーあり
+                add_banner=True,  # バナーあり
             )
 
         result["status"] = "success"
@@ -902,7 +902,8 @@ def main():
             if processed_count >= args.limit:
                 break
 
-            is_first = idx == 0
+            # branch_no == 1 のみ first file として扱う
+            is_first = file_info["branch_no"] == 1
 
             # 処理実行
             result = backup_and_process(

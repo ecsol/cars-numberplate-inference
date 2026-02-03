@@ -32,24 +32,23 @@ ORDER BY
 **Logic:**
 1. Query DB lấy tất cả files của ngày
 2. Nhóm theo xe (`car_cd` hoặc `inspresultdata_cd`)
-3. Trong mỗi xe, sort theo `branch_no` ASC (tăng dần)
-4. File có `branch_no` nhỏ nhất = **First file** (thường là `branch_no = 1`)
+3. **Chỉ file có `branch_no = 1` mới là First file**
 
 **Code:**
 ```python
-# Sort files by branch_no
-car_files.sort(key=lambda x: x["branch_no"] or 999)
-
-# First file = index 0 after sorting
-is_first = idx == 0
+# branch_no == 1 のみ first file として扱う
+is_first = file_info["branch_no"] == 1
 ```
 
 **Ví dụ:**
-| File | branch_no | is_first |
-|------|-----------|----------|
-| 001.jpg | 1 | TRUE |
-| 002.jpg | 2 | FALSE |
-| 003.jpg | 3 | FALSE |
+| File    | branch_no | is_first |
+| ------- | --------- | -------- |
+| 001.jpg | 1         | TRUE     |
+| 002.jpg | 2         | FALSE    |
+| 003.jpg | 3         | FALSE    |
+| 004.jpg | NULL      | FALSE    |
+
+**Lưu ý:** Nếu xe không có file `branch_no = 1`, sẽ không có first file → tất cả chỉ output vào `.detect/`
 
 ---
 
