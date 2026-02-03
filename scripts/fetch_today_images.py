@@ -887,7 +887,9 @@ def backup_and_process(
 
                 if s3_backup_exists(backup_s3_key):
                     s3_download_backup(backup_s3_key, temp_input_path)
-                    logger.debug(f"バックアップから入力: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}")
+                    logger.debug(
+                        f"バックアップから入力: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}"
+                    )
                 else:
                     # バックアップがない場合は現在の画像を使用
                     logger.warn(f"バックアップなし、現在の画像を使用: {full_path}")
@@ -918,7 +920,9 @@ def backup_and_process(
                 detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
             else:
                 # ローカルバックアップから入力
-                backup_path = os.path.join(BACKUP_DIR, relative_path) if BACKUP_DIR else None
+                backup_path = (
+                    os.path.join(BACKUP_DIR, relative_path) if BACKUP_DIR else None
+                )
                 if backup_path and os.path.exists(backup_path):
                     input_path = backup_path
                     logger.debug(f"バックアップから入力: {backup_path}")
@@ -992,7 +996,9 @@ def backup_and_process(
 
             if s3_backup_exists(backup_s3_key):
                 s3_download_backup(backup_s3_key, temp_input_path)
-                logger.debug(f"バックアップから入力: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}")
+                logger.debug(
+                    f"バックアップから入力: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}"
+                )
             else:
                 # バックアップがない場合は現在の画像を使用
                 logger.warn(f"バックアップなし、現在の画像を使用: {full_path}")
@@ -1041,7 +1047,9 @@ def backup_and_process(
             detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
         else:
             # ローカルバックアップから入力
-            backup_path = os.path.join(BACKUP_DIR, relative_path) if BACKUP_DIR else None
+            backup_path = (
+                os.path.join(BACKUP_DIR, relative_path) if BACKUP_DIR else None
+            )
             if backup_path and os.path.exists(backup_path):
                 input_path = backup_path
                 logger.debug(f"バックアップから入力: {backup_path}")
@@ -1393,6 +1401,7 @@ def main():
 
             # branch_no == 1 のみ first file として扱う
             is_first = file_info["branch_no"] == 1
+            logger.debug(f"branch_no={file_info['branch_no']} (type={type(file_info['branch_no']).__name__}), is_first={is_first}")
 
             # 処理実行
             result = backup_and_process(
