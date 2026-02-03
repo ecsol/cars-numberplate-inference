@@ -107,6 +107,8 @@ _s3_client = None
 # Chatwork通知設定（オプション）
 CHATWORK_API_KEY = os.getenv("CHATWORK_API_KEY", "")
 CHATWORK_ROOM_ID = os.getenv("CHATWORK_ROOM_ID", "")
+# 画像のベースURL（Chatwork通知用）
+IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "https://www.autobacs-cars-system.com")
 
 
 def get_s3_client():
@@ -154,7 +156,8 @@ def build_processing_summary(
     Args:
         target_date: 対象日
         stats: 統計情報
-        car_results: 車両ごとの処理結果 [(car_id, success_count, error_count, detections), ...]
+        car_results: 車両ごとの処理結果
+            [(car_id, success_count, error_count, detections, first_image_path), ...]
 
     Returns:
         str: Chatwork用メッセージ
@@ -165,20 +168,27 @@ def build_processing_summary(
         f"✅ 成功: {stats['success']}件",
         f"❌ エラー: {stats['error']}件",
         f"⏭️ スキップ: {stats['skip_tracked'] + stats['skip_other']}件",
+        "[/info]",
         "",
     ]
 
     if car_results:
-        lines.append("📊 車両別結果:")
-        for car_id, success, error, detections in car_results[:10]:  # 最大10台
+        lines.append("[info][title]📊 車両別結果[/title]")
+        for car_id, success, error, detections, first_image_path in car_results[:10]:
             status_icon = "✅" if error == 0 else "⚠️"
             lines.append(
-                f"  {status_icon} {car_id}: {success}枚処理, 検出{detections}件"
+                f"{status_icon} {car_id}: {success}枚処理, 検出{detections}件"
             )
-        if len(car_results) > 10:
-            lines.append(f"  ... 他 {len(car_results) - 10}台")
+            # 最初の画像のURLを追加
+            if first_image_path:
+                image_url = f"{IMAGE_BASE_URL}{first_image_path}"
+                lines.append(f"   {image_url}")
+            lines.append("")
 
-    lines.append("[/info]")
+        if len(car_results) > 10:
+            lines.append(f"... 他 {len(car_results) - 10}台")
+        lines.append("[/info]")
+
     return "\n".join(lines)
 
 
@@ -974,6 +984,7 @@ def main():
         car_success = 0
         car_error = 0
         car_detections = 0
+        car_first_image_path = None  # 最初に処理成功した画像のパス
 
         for idx, file_info in enumerate(car_files):
             file_id = file_info["id"]
@@ -998,6 +1009,9 @@ def main():
                 processed_count += 1
                 car_success += 1
                 car_detections += result.get("detections", 0)
+                # 最初に処理成功した画像のパスを記録
+                if car_first_image_path is None:
+                    car_first_image_path = file_info["path"]
 
                 # トラッキングに記録
                 tracker.mark_processed(
@@ -1041,7 +1055,9 @@ def main():
 
         # 車両処理完了後、結果を記録（処理があった場合のみ）
         if car_success > 0 or car_error > 0:
-            car_results.append((car_key, car_success, car_error, car_detections))
+            car_results.append(
+                (car_key, car_success, car_error, car_detections, car_first_image_path)
+            )
 
     # 最終統計
     logger.info("=" * 60)
