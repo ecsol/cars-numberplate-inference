@@ -787,7 +787,9 @@ def main():
         logger.info("初回実行: 全件取得")
 
     # 画像を取得
-    images = get_images_by_date(target_date=target_date, last_fetch_time=last_fetch_time)
+    images = get_images_by_date(
+        target_date=target_date, last_fetch_time=last_fetch_time
+    )
 
     if not images:
         logger.info(f"{target_date} の画像はありません")
