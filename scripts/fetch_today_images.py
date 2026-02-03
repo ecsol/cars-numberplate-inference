@@ -779,15 +779,34 @@ def backup_and_process(
     # .detect/ フォルダパス
     dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
 
-    # バナーは first file (branch_no=1) のみ、または --force-overlay で全画像に適用
+    # バナーは first file (branch_no=1) のみ
     # - First file: .detect/ = mask + banner, original = banner only
     # - Other files: .detect/ = mask only (no banner), original = unchanged
-    # - force_overlay=True: 全画像に .detect/ = mask + banner
-    add_banner_to_detect = is_first_image or force_overlay
+    # - force_overlay=True: 元画像に直接バナーのみ上書き（.detect/やbackup処理なし）
+    add_banner_to_detect = is_first_image
 
     # 処理実行（Two-Stage: Seg + Pose）
     try:
-        # === .detect/ にマスク版を保存 ===
+        # === --force-overlay モード: 元画像に直接バナーのみ上書き ===
+        if force_overlay:
+            logger.debug(f"Force overlay: 元画像にバナーのみ上書き (masking=False, banner=True)")
+            result = process_image(
+                input_path=full_path,
+                output_path=full_path,
+                seg_model=seg_model,
+                pose_model=pose_model,
+                mask_image=mask_image,
+                is_masking=False,  # マスクなし
+                add_banner=True,  # バナーあり
+            )
+            result["status"] = "success"
+            result["output_path"] = full_path
+            result["is_first"] = is_first_image
+            result["force_overlay"] = True
+            logger.debug(f"Force overlay完了: {full_path}")
+            return result
+
+        # === 通常モード: .detect/ にマスク版を保存 ===
         logger.debug(
             f"Two-Stage推論開始: .detect/ 出力 (masking=True, banner={add_banner_to_detect})"
         )
