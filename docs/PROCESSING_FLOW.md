@@ -17,6 +17,42 @@ Script `fetch_today_images.py` xử lý ảnh xe từ database, detect biển s�
 
 ## Processing Rules
 
+### 0. First File Determination (Cách xác định ảnh đầu tiên)
+
+**First file được xác định từ DATABASE:**
+
+```sql
+SELECT ... FROM upload_files
+WHERE ...
+ORDER BY 
+    COALESCE(inspresultdata_cd, car_cd::text),  -- Group by car
+    branch_no ASC                                -- Sort by branch_no
+```
+
+**Logic:**
+1. Query DB lấy tất cả files của ngày
+2. Nhóm theo xe (`car_cd` hoặc `inspresultdata_cd`)
+3. Trong mỗi xe, sort theo `branch_no` ASC (tăng dần)
+4. File có `branch_no` nhỏ nhất = **First file** (thường là `branch_no = 1`)
+
+**Code:**
+```python
+# Sort files by branch_no
+car_files.sort(key=lambda x: x["branch_no"] or 999)
+
+# First file = index 0 after sorting
+is_first = idx == 0
+```
+
+**Ví dụ:**
+| File | branch_no | is_first |
+|------|-----------|----------|
+| 001.jpg | 1 | TRUE |
+| 002.jpg | 2 | FALSE |
+| 003.jpg | 3 | FALSE |
+
+---
+
 ### 1. Backup Logic (KHÔNG THAY ĐỔI)
 - Trước khi xử lý, backup file gốc vào `.backup/`
 - Backup chỉ tạo MỘT LẦN - không bao giờ ghi đè
