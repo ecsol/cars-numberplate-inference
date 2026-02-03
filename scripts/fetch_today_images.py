@@ -621,7 +621,7 @@ def get_images_from_path(folder_path: str) -> list:
         )
         
         if len(rows) != len(file_names):
-            logger.warning(
+            logger.warn(
                 f"ファイル数とDB登録数が一致しません: "
                 f"ファイル={len(file_names)}, DB={len(rows)}"
             )
