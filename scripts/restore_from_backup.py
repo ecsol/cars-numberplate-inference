@@ -141,7 +141,9 @@ def restore_from_s3(relative_path: str, dry_run: bool = False) -> bool:
     target_path = os.path.join(S3_MOUNT, relative_path.lstrip("/"))
 
     if dry_run:
-        logger.info(f"[DRY-RUN] 復元: s3://{BACKUP_S3_BUCKET}/{s3_key} -> {target_path}")
+        logger.info(
+            f"[DRY-RUN] 復元: s3://{BACKUP_S3_BUCKET}/{s3_key} -> {target_path}"
+        )
         return True
 
     try:
@@ -158,7 +160,9 @@ def restore_from_s3(relative_path: str, dry_run: bool = False) -> bool:
 
     except ClientError as e:
         if e.response["Error"]["Code"] == "NoSuchKey":
-            logger.error(f"バックアップが見つかりません: s3://{BACKUP_S3_BUCKET}/{s3_key}")
+            logger.error(
+                f"バックアップが見つかりません: s3://{BACKUP_S3_BUCKET}/{s3_key}"
+            )
         else:
             logger.error(f"S3エラー: {e}")
         return False
@@ -305,11 +309,13 @@ def main():
                 if car_id_from_path != args.car_id:
                     continue
 
-        files_to_restore.append({
-            "file_id": file_id,
-            "path": path,
-            "status": status,
-        })
+        files_to_restore.append(
+            {
+                "file_id": file_id,
+                "path": path,
+                "status": status,
+            }
+        )
 
     if not files_to_restore:
         logger.info("復元対象のファイルがありません")
@@ -318,7 +324,7 @@ def main():
     # リミット適用
     if args.limit and len(files_to_restore) > args.limit:
         logger.info(f"リミット適用: {len(files_to_restore)} -> {args.limit}件")
-        files_to_restore = files_to_restore[:args.limit]
+        files_to_restore = files_to_restore[: args.limit]
 
     logger.info(f"復元対象: {len(files_to_restore)}件")
     logger.info("-" * 40)

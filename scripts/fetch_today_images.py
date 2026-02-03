@@ -35,6 +35,7 @@ warnings.filterwarnings("ignore", message=".*Boto3 will no longer support Python
 import boto3
 from botocore.exceptions import ClientError
 import psycopg2
+import requests
 
 # スクリプトディレクトリ
 SCRIPT_DIR = Path(__file__).parent
@@ -103,6 +104,10 @@ BACKUP_DIR = os.getenv("BACKUP_DIR", "")
 # boto3 S3 client (lazy init)
 _s3_client = None
 
+# Chatwork通知設定（オプション）
+CHATWORK_API_KEY = os.getenv("CHATWORK_API_KEY", "")
+CHATWORK_ROOM_ID = os.getenv("CHATWORK_ROOM_ID", "")
+
 
 def get_s3_client():
     """S3クライアントを取得（遅延初期化）"""
@@ -110,6 +115,71 @@ def get_s3_client():
     if _s3_client is None:
         _s3_client = boto3.client("s3")
     return _s3_client
+
+
+def send_chatwork_notification(message: str) -> bool:
+    """
+    Chatworkに通知を送信
+
+    Args:
+        message: 送信するメッセージ
+
+    Returns:
+        bool: 送信成功かどうか
+    """
+    if not CHATWORK_API_KEY or not CHATWORK_ROOM_ID:
+        return False
+
+    try:
+        url = f"https://api.chatwork.com/v2/rooms/{CHATWORK_ROOM_ID}/messages"
+        headers = {"X-ChatWorkToken": CHATWORK_API_KEY}
+        data = {"body": message}
+
+        response = requests.post(url, headers=headers, data=data, timeout=10)
+        response.raise_for_status()
+        return True
+    except Exception as e:
+        logger.error(f"Chatwork通知失敗: {e}")
+        return False
+
+
+def build_processing_summary(
+    target_date: datetime.date,
+    stats: dict,
+    car_results: list,
+) -> str:
+    """
+    処理結果のサマリーメッセージを作成
+
+    Args:
+        target_date: 対象日
+        stats: 統計情報
+        car_results: 車両ごとの処理結果 [(car_id, success_count, error_count, detections), ...]
+
+    Returns:
+        str: Chatwork用メッセージ
+    """
+    lines = [
+        "[info][title]🚗 ナンバープレート処理完了[/title]",
+        f"📅 対象日: {target_date}",
+        f"✅ 成功: {stats['success']}件",
+        f"❌ エラー: {stats['error']}件",
+        f"⏭️ スキップ: {stats['skip_tracked'] + stats['skip_other']}件",
+        "",
+    ]
+
+    if car_results:
+        lines.append("📊 車両別結果:")
+        for car_id, success, error, detections in car_results[:10]:  # 最大10台
+            status_icon = "✅" if error == 0 else "⚠️"
+            lines.append(
+                f"  {status_icon} {car_id}: {success}枚処理, 検出{detections}件"
+            )
+        if len(car_results) > 10:
+            lines.append(f"  ... 他 {len(car_results) - 10}台")
+
+    lines.append("[/info]")
+    return "\n".join(lines)
 
 
 def s3_backup_exists(s3_key: str) -> bool:
@@ -875,6 +945,9 @@ def main():
     stats = {"success": 0, "skip_tracked": 0, "skip_other": 0, "error": 0}
     processed_count = 0
 
+    # 車両ごとの結果（Chatwork通知用）
+    car_results = []  # [(car_id, success, error, detections), ...]
+
     # 各車両を処理
     for car_key, car_files in car_images.items():
         # limit到達チェック
@@ -897,6 +970,11 @@ def main():
 
         logger.debug(f"車両処理開始: {car_key} ({len(car_files)}枚)")
 
+        # 車両ごとの統計
+        car_success = 0
+        car_error = 0
+        car_detections = 0
+
         for idx, file_info in enumerate(car_files):
             file_id = file_info["id"]
 
@@ -918,6 +996,8 @@ def main():
             if status == "success":
                 stats["success"] += 1
                 processed_count += 1
+                car_success += 1
+                car_detections += result.get("detections", 0)
 
                 # トラッキングに記録
                 tracker.mark_processed(
@@ -939,6 +1019,7 @@ def main():
             elif status == "error":
                 stats["error"] += 1
                 processed_count += 1
+                car_error += 1
 
                 # エラーもトラッキングに記録
                 tracker.mark_processed(
@@ -958,6 +1039,10 @@ def main():
                     f"スキップ: {file_info['path']} - {result.get('reason', '')}"
                 )
 
+        # 車両処理完了後、結果を記録（処理があった場合のみ）
+        if car_success > 0 or car_error > 0:
+            car_results.append((car_key, car_success, car_error, car_detections))
+
     # 最終統計
     logger.info("=" * 60)
     logger.info("処理完了")
@@ -974,6 +1059,14 @@ def main():
     tracker.set_last_processed_time(target_date, datetime.now())
     logger.info(f"次回増分取得: {datetime.now().strftime('%H:%M:%S')} 以降")
     logger.info("=" * 60)
+
+    # Chatwork通知（処理があった場合のみ）
+    if CHATWORK_API_KEY and CHATWORK_ROOM_ID and car_results:
+        message = build_processing_summary(target_date, stats, car_results)
+        if send_chatwork_notification(message):
+            logger.info("Chatwork通知送信完了")
+        else:
+            logger.warn("Chatwork通知送信失敗")
 
 
 if __name__ == "__main__":

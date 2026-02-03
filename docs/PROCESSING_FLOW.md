@@ -168,6 +168,25 @@ Environment variables:
 - `BACKUP_S3_BUCKET`: S3 bucket for backup via boto3 (e.g., `cs1es3`)
 - `BACKUP_S3_PREFIX`: Backup folder name (default: `.backup`)
 
+### Chatwork Notification (Optional)
+- `CHATWORK_API_KEY`: Chatwork API token
+- `CHATWORK_ROOM_ID`: Room ID để gửi thông báo
+
+Nếu cả 2 biến được set và có ảnh được xử lý, sẽ gửi summary lên Chatwork:
+```
+[info][title]🚗 ナンバープレート処理完了[/title]
+📅 対象日: 2026-02-03
+✅ 成功: 50件
+❌ エラー: 2件
+⏭️ スキップ: 100件
+
+📊 車両別結果:
+  ✅ 10418430: 5枚処理, 検出3件
+  ⚠️ 10418457: 3枚処理, 検出1件
+  ...
+[/info]
+```
+
 ---
 
 ## Tracking File Design
@@ -219,25 +238,25 @@ Ví dụ: `logs/tracking/processed_20260203.json`
 
 ### Field Definitions
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `date` | string | Yes | Ngày xử lý (ISO format) |
-| `created_at` | string | Yes | Thời gian tạo file tracking |
-| `last_processed_time` | string | No | Thời gian xử lý cuối (dùng cho incremental fetch) |
-| `processed` | object | Yes | Map của file_id -> record |
+| Field                 | Type   | Required | Description                                       |
+| --------------------- | ------ | -------- | ------------------------------------------------- |
+| `date`                | string | Yes      | Ngày xử lý (ISO format)                           |
+| `created_at`          | string | Yes      | Thời gian tạo file tracking                       |
+| `last_processed_time` | string | No       | Thời gian xử lý cuối (dùng cho incremental fetch) |
+| `processed`           | object | Yes      | Map của file_id -> record                         |
 
 ### Record Fields
 
-| Field | Type | Required | Description | Used by Restore |
-|-------|------|----------|-------------|-----------------|
-| `file_id` | int | Yes | ID trong database | No |
-| `path` | string | Yes | Đường dẫn relative (e.g., `/upfile/1041/8430/xxx.jpg`) | **YES** - để xác định file cần restore |
-| `branch_no` | int/null | Yes | Số thứ tự ảnh trong xe | No (debug only) |
-| `processed_at` | string | Yes | Thời gian xử lý | No |
-| `status` | string | Yes | `success` / `error` / `skip` | **YES** - để filter |
-| `detections` | int | No | Số biển số phát hiện | No |
-| `is_first` | bool | Yes | Có phải ảnh đầu tiên không | No |
-| `error` | string | No | Lý do lỗi (nếu status=error) | No |
+| Field          | Type     | Required | Description                                            | Used by Restore                        |
+| -------------- | -------- | -------- | ------------------------------------------------------ | -------------------------------------- |
+| `file_id`      | int      | Yes      | ID trong database                                      | No                                     |
+| `path`         | string   | Yes      | Đường dẫn relative (e.g., `/upfile/1041/8430/xxx.jpg`) | **YES** - để xác định file cần restore |
+| `branch_no`    | int/null | Yes      | Số thứ tự ảnh trong xe                                 | No (debug only)                        |
+| `processed_at` | string   | Yes      | Thời gian xử lý                                        | No                                     |
+| `status`       | string   | Yes      | `success` / `error` / `skip`                           | **YES** - để filter                    |
+| `detections`   | int      | No       | Số biển số phát hiện                                   | No                                     |
+| `is_first`     | bool     | Yes      | Có phải ảnh đầu tiên không                             | No                                     |
+| `error`        | string   | No       | Lý do lỗi (nếu status=error)                           | No                                     |
 
 ### Restore Script Usage
 
