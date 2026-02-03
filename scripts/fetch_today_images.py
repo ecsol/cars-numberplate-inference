@@ -845,7 +845,7 @@ def main():
         "--limit",
         type=int,
         default=10,
-        help="1回の実行で処理する最大画像数 [デフォルト: 10]",
+        help="1回の実行で処理する最大車両数 [デフォルト: 10]",
     )
 
     args = parser.parse_args()
@@ -952,16 +952,16 @@ def main():
 
     # 処理カウンター
     stats = {"success": 0, "skip_tracked": 0, "skip_other": 0, "error": 0}
-    processed_count = 0
+    processed_cars = 0  # 処理した車両数（limitはこれで判定）
 
     # 車両ごとの結果（Chatwork通知用）
     car_results = []  # [(car_id, success, error, detections), ...]
 
     # 各車両を処理
     for car_key, car_files in car_images.items():
-        # limit到達チェック
-        if processed_count >= args.limit:
-            logger.info(f"処理上限到達: {args.limit}件")
+        # limit到達チェック（車両数で判定）
+        if processed_cars >= args.limit:
+            logger.info(f"処理上限到達: {args.limit}台")
             break
 
         # branch_noでソート
@@ -988,10 +988,6 @@ def main():
         for idx, file_info in enumerate(car_files):
             file_id = file_info["id"]
 
-            # limit到達チェック
-            if processed_count >= args.limit:
-                break
-
             # branch_no == 1 のみ first file として扱う
             is_first = file_info["branch_no"] == 1
 
@@ -1005,7 +1001,6 @@ def main():
 
             if status == "success":
                 stats["success"] += 1
-                processed_count += 1
                 car_success += 1
                 car_detections += result.get("detections", 0)
                 # 処理成功した画像を記録
@@ -1023,14 +1018,13 @@ def main():
                 )
 
                 logger.success(
-                    f"[{processed_count}/{args.limit}] {file_info['path']} "
+                    f"{file_info['path']} "
                     f"(検出: {result.get('detections', 0)}, "
                     f"バナー: {'あり' if is_first else 'なし'})"
                 )
 
             elif status == "error":
                 stats["error"] += 1
-                processed_count += 1
                 car_error += 1
 
                 # エラーもトラッキングに記録
@@ -1053,6 +1047,11 @@ def main():
 
         # 車両処理完了後、結果を記録（処理があった場合のみ）
         if car_success > 0 or car_error > 0:
+            processed_cars += 1  # 車両カウント
+            logger.info(
+                f"[{processed_cars}/{args.limit}台] {car_key}: "
+                f"{car_success}枚成功, {car_error}枚エラー, 検出{car_detections}件"
+            )
             # branch_noでソートしてから記録
             car_images.sort(key=lambda x: x[0])
             car_results.append(
