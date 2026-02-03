@@ -596,18 +596,46 @@ def backup_and_process(
             "path": full_path,
         }
 
+    # 出力先の決定
+    # - First file: 元ファイルに上書き（バナーのみ、マスクなし）
+    # - Non-first file: .detect/ フォルダに保存（マスク＋バナー）
+    if is_first_image:
+        output_path = full_path
+        apply_masking = False  # マスクなし
+        apply_banner = True    # バナーあり
+    else:
+        # .detect/ フォルダに出力
+        dir_path = os.path.dirname(full_path)
+        detect_dir = os.path.join(dir_path, ".detect")
+        output_path = os.path.join(detect_dir, file_name)
+        apply_masking = True   # マスクあり
+        apply_banner = True    # バナーあり
+
+        # .detect/ ディレクトリ作成（S3の場合は不要、ローカルの場合のみ）
+        if not BACKUP_S3_BUCKET:
+            try:
+                os.makedirs(detect_dir, exist_ok=True)
+            except Exception as e:
+                logger.error(f".detect/ ディレクトリ作成失敗: {e}")
+
     # 処理実行（Two-Stage: Seg + Pose）
     try:
-        logger.debug(f"Two-Stage推論開始: is_first={is_first_image}")
+        logger.debug(
+            f"Two-Stage推論開始: is_first={is_first_image}, "
+            f"masking={apply_masking}, banner={apply_banner}"
+        )
         result = process_image(
             input_path=full_path,
-            output_path=full_path,
+            output_path=output_path,
             seg_model=seg_model,
             pose_model=pose_model,
             mask_image=mask_image,
-            is_masking=is_first_image,
+            is_masking=apply_masking,
+            add_banner=apply_banner,
         )
         result["status"] = "success"
+        result["output_path"] = output_path
+        result["is_first"] = is_first_image
         # バックアップパス情報
         if BACKUP_S3_BUCKET:
             dir_part = os.path.dirname(relative_path)
@@ -616,7 +644,7 @@ def backup_and_process(
             )
         elif BACKUP_DIR:
             result["backup_path"] = os.path.join(BACKUP_DIR, relative_path)
-        logger.debug(f"処理完了: 検出数={result.get('detections', 0)}")
+        logger.debug(f"処理完了: 検出数={result.get('detections', 0)}, 出力={output_path}")
         return result
     except Exception as e:
         logger.error(f"処理失敗: {e}")

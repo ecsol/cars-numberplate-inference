@@ -437,10 +437,24 @@ def process_image(
     pose_model: YOLO,
     mask_image: np.ndarray,
     is_masking: bool = True,
+    add_banner: bool = True,
     seg_conf: float = 0.3,
     pose_conf: float = 0.2,
 ) -> dict:
-    """Two-Stageで画像を処理"""
+    """
+    Two-Stageで画像を処理
+
+    Args:
+        input_path: 入力画像パス
+        output_path: 出力画像パス
+        seg_model: セグメンテーションモデル
+        pose_model: ポーズモデル
+        mask_image: マスク画像
+        is_masking: マスクを適用するか (False=検出のみ、マスクなし)
+        add_banner: バナーを追加するか
+        seg_conf: セグメンテーション信頼度閾値
+        pose_conf: ポーズ信頼度閾値
+    """
     # EXIF Orientation
     exif_orientation = get_exif_orientation(input_path)
 
@@ -466,14 +480,15 @@ def process_image(
         image, seg_model, pose_model, seg_conf, pose_conf
     )
 
-    # マスク適用
+    # マスク適用（is_masking=Trueの場合のみ）
     result = image.copy()
-    for det in detections:
-        corners = det["corners"]
-        result = apply_mask_with_shadow(result, corners, mask_image)
-
-    # バナー追加
     if is_masking:
+        for det in detections:
+            corners = det["corners"]
+            result = apply_mask_with_shadow(result, corners, mask_image)
+
+    # バナー追加（add_banner=Trueの場合のみ）
+    if add_banner:
         result, alpha_channel = add_banner_overlay(result, BANNER_PATH, alpha_channel)
 
     # サイズ確認
@@ -510,6 +525,7 @@ def process_image(
         "original_size": (original_w, original_h),
         "detections": len(detections),
         "is_masking": is_masking,
+        "add_banner": add_banner,
     }
 
 
