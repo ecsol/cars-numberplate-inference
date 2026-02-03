@@ -853,7 +853,7 @@ def backup_and_process(
         # --force モード: .detect/ を強制再作成（既存ファイルを上書き）
         # ============================================================
         # 処理内容:
-        #   - branch_no=1: .detect/ にバナーのみ（マスクなし）で上書き
+        #   - branch_no=1: .detect/ にマスク+バナーで上書き
         #   - branch_no!=1: .detect/ にマスクのみ（バナー【絶対禁止】）で上書き
         # 入力:
         #   - .backup から元画像を取得（検出精度のため）
@@ -862,11 +862,16 @@ def backup_and_process(
         #   - 元画像は変更しない
         # 用途:
         #   - 間違ってバナーが付いた.detect/ファイルを修正
+        # 注意:
+        #   - .detect/ は常にマスクあり
+        #   - バナーは branch_no=1 のみ
+        #   - original にバナーのみは通常モードで処理
         # ============================================================
         if force:
-            # branch_no=1: バナーのみ（マスクなし）
+            # .detect/ は常にマスクあり
+            # branch_no=1: マスク+バナー
             # branch_no!=1: マスクのみ（バナー【絶対禁止】）
-            use_masking = not is_first_image  # branch_no!=1 はマスクあり
+            use_masking = True  # .detect/ は常にマスクあり
             use_banner = is_first_image  # branch_no=1 のみバナー
 
             logger.debug(
@@ -904,7 +909,7 @@ def backup_and_process(
                     seg_model=seg_model,
                     pose_model=pose_model,
                     mask_image=mask_image,
-                    is_masking=use_masking,  # branch_no!=1: マスクあり
+                    is_masking=True,  # .detect/は常にマスクあり
                     add_banner=use_banner,  # branch_no=1のみバナー【それ以外は絶対禁止】
                 )
 
@@ -938,7 +943,7 @@ def backup_and_process(
                     seg_model=seg_model,
                     pose_model=pose_model,
                     mask_image=mask_image,
-                    is_masking=use_masking,  # branch_no!=1: マスクあり
+                    is_masking=True,  # .detect/は常にマスクあり
                     add_banner=use_banner,  # branch_no=1のみバナー【それ以外は絶対禁止】
                 )
 
