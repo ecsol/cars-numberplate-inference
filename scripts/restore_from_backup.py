@@ -39,7 +39,7 @@ else:
 # プロジェクトルート
 PROJECT_DIR = Path(__file__).parent.parent
 
-# ログディレクトリ（トラッキングファイルの場所）
+# ログディレクトリ
 _log_dir_env = os.getenv("LOG_DIR", "")
 if _log_dir_env:
     if os.path.isabs(_log_dir_env):
@@ -48,6 +48,9 @@ if _log_dir_env:
         LOG_DIR = PROJECT_DIR / _log_dir_env
 else:
     LOG_DIR = PROJECT_DIR / "logs"
+
+# トラッキングディレクトリ（logs/tracking/）
+TRACKING_DIR = LOG_DIR / "tracking"
 
 # S3マウントポイント
 S3_MOUNT = os.getenv("S3_MOUNT", "")
@@ -93,7 +96,7 @@ def get_s3_client():
 
 def get_tracking_file(target_date: datetime.date) -> Path:
     """トラッキングファイルパスを取得"""
-    return LOG_DIR / f"processed_{target_date.strftime('%Y%m%d')}.json"
+    return TRACKING_DIR / f"processed_{target_date.strftime('%Y%m%d')}.json"
 
 
 def load_tracking_data(target_date: datetime.date) -> dict:
