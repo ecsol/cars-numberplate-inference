@@ -677,24 +677,56 @@ def backup_and_process(
             "path": full_path,
         }
 
-    # .detect/ フォルダパス（全ファイル共通で使用）
-    dir_path = os.path.dirname(full_path)
-    detect_dir = os.path.join(dir_path, ".detect")
-    detect_output_path = os.path.join(detect_dir, file_name)
+    # .detect/ フォルダパス
+    dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
 
     # 処理実行（Two-Stage: Seg + Pose）
     try:
         # === 全ファイル共通: .detect/ にマスク＋バナー版を保存 ===
         logger.debug(f"Two-Stage推論開始: .detect/ 出力 (masking=True, banner=True)")
-        result = process_image(
-            input_path=full_path,
-            output_path=detect_output_path,
-            seg_model=seg_model,
-            pose_model=pose_model,
-            mask_image=mask_image,
-            is_masking=True,  # マスクあり
-            add_banner=True,  # バナーあり
-        )
+
+        # S3の場合: tempファイルに出力後、boto3でアップロード
+        # ローカルの場合: 直接.detect/に出力
+        if BACKUP_S3_BUCKET:
+            import tempfile
+            # 一時ファイルに出力
+            with tempfile.NamedTemporaryFile(suffix=os.path.splitext(file_name)[1], delete=False) as tmp:
+                temp_detect_path = tmp.name
+
+            result = process_image(
+                input_path=full_path,
+                output_path=temp_detect_path,
+                seg_model=seg_model,
+                pose_model=pose_model,
+                mask_image=mask_image,
+                is_masking=True,  # マスクあり
+                add_banner=True,  # バナーあり
+            )
+
+            # S3にアップロード
+            detect_s3_key = f"webroot/{dir_part}/.detect/{file_name}"
+            s3_upload_backup(temp_detect_path, detect_s3_key)
+            logger.debug(f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}")
+
+            # 一時ファイル削除
+            os.unlink(temp_detect_path)
+
+            detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
+        else:
+            # ローカルの場合は直接出力
+            detect_dir = os.path.join(os.path.dirname(full_path), ".detect")
+            detect_output_path = os.path.join(detect_dir, file_name)
+            os.makedirs(detect_dir, exist_ok=True)
+
+            result = process_image(
+                input_path=full_path,
+                output_path=detect_output_path,
+                seg_model=seg_model,
+                pose_model=pose_model,
+                mask_image=mask_image,
+                is_masking=True,  # マスクあり
+                add_banner=True,  # バナーあり
+            )
 
         # === First fileのみ: 元ファイルにバナーのみ版を上書き ===
         if is_first_image:
