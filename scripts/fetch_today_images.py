@@ -289,6 +289,7 @@ class ProcessingTracker:
         status: str,
         detections: int = 0,
         is_first: bool = False,
+        branch_no: Optional[int] = None,
         error_reason: Optional[str] = None,
     ):
         """ファイルを処理済みとしてマーク"""
@@ -297,6 +298,7 @@ class ProcessingTracker:
         record = {
             "file_id": file_id,
             "path": path,
+            "branch_no": branch_no,
             "processed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "status": status,
             "detections": detections,
@@ -925,6 +927,7 @@ def main():
                     status="success",
                     detections=result.get("detections", 0),
                     is_first=is_first,
+                    branch_no=file_info["branch_no"],
                 )
 
                 logger.success(
@@ -943,6 +946,7 @@ def main():
                     file_id=file_id,
                     path=file_info["path"],
                     status="error",
+                    branch_no=file_info["branch_no"],
                     error_reason=result.get("reason", "unknown"),
                 )
 
