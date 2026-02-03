@@ -672,6 +672,7 @@ def get_images_by_date(
 def backup_and_process(
     file_path: str,
     is_first_image: bool = False,
+    force_overlay: bool = False,
 ) -> dict:
     """
     画像をバックアップして処理
@@ -684,6 +685,7 @@ def backup_and_process(
     Args:
         file_path: S3上のファイルパス (例: /upfile/1007/4856/20220824190333_1.jpg)
         is_first_image: 最初の画像かどうか (True=バナー追加)
+        force_overlay: 強制的にバナーを追加するか
 
     Returns:
         dict: 処理結果
@@ -777,10 +779,11 @@ def backup_and_process(
     # .detect/ フォルダパス
     dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
 
-    # バナーは first file (branch_no=1) のみ
+    # バナーは first file (branch_no=1) のみ、または --force-overlay で全画像に適用
     # - First file: .detect/ = mask + banner, original = banner only
     # - Other files: .detect/ = mask only (no banner), original = unchanged
-    add_banner_to_detect = is_first_image
+    # - force_overlay=True: 全画像に .detect/ = mask + banner
+    add_banner_to_detect = is_first_image or force_overlay
 
     # 処理実行（Two-Stage: Seg + Pose）
     try:
@@ -996,6 +999,11 @@ def main():
         default=None,
         help="特定フォルダのみ処理 (例: /1554913G または 1554913G) - DBをバイパス",
     )
+    parser.add_argument(
+        "--force-overlay",
+        action="store_true",
+        help="全画像にバナーを強制適用 (デフォルト: 先頭画像のみ)",
+    )
 
     args = parser.parse_args()
 
@@ -1159,6 +1167,7 @@ def main():
             result = backup_and_process(
                 file_path=file_info["path"],
                 is_first_image=is_first,
+                force_overlay=args.force_overlay,
             )
 
             status = result.get("status", "error")
