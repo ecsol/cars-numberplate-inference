@@ -122,6 +122,8 @@ def build_car_structure(images: list, target_date) -> dict:
         lambda: {
             "car_cd": None,
             "inspresultdata_cd": None,
+            "created": None,
+            "modified": None,
             "total_images": 0,
             "images": [],
         }
@@ -145,6 +147,17 @@ def build_car_structure(images: list, target_date) -> dict:
         cars[car_key]["car_cd"] = str(car_cd) if car_cd else None
         cars[car_key]["inspresultdata_cd"] = inspresultdata_cd
         cars[car_key]["total_images"] += 1
+        
+        # 車両の作成日・更新日を追跡（最も古いcreated、最も新しいmodified）
+        if created:
+            created_str = created.isoformat() if hasattr(created, 'isoformat') else str(created)
+            if cars[car_key]["created"] is None or created_str < cars[car_key]["created"]:
+                cars[car_key]["created"] = created_str
+        if modified:
+            modified_str = modified.isoformat() if hasattr(modified, 'isoformat') else str(modified)
+            if cars[car_key]["modified"] is None or modified_str > cars[car_key]["modified"]:
+                cars[car_key]["modified"] = modified_str
+        
         cars[car_key]["images"].append(
             {
                 "branch_no": branch_no,
@@ -152,6 +165,8 @@ def build_car_structure(images: list, target_date) -> dict:
                 "url": f"{IMAGE_BASE_URL}{save_file_name}",
                 "filename": os.path.basename(save_file_name),
                 "file_id": file_id,
+                "created": created.isoformat() if created and hasattr(created, 'isoformat') else str(created) if created else None,
+                "modified": modified.isoformat() if modified and hasattr(modified, 'isoformat') else str(modified) if modified else None,
             }
         )
 
