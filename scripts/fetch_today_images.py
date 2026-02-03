@@ -110,15 +110,12 @@ CHATWORK_ROOM_ID = os.getenv("CHATWORK_ROOM_ID", "")
 # 画像のベースURL（Chatwork通知用）
 IMAGE_BASE_URL = os.getenv("IMAGE_BASE_URL", "https://www.autobacs-cars-system.com")
 # 担当者リスト（Chatworkメンション用）
-# フォーマット: "user_id1:名前1,user_id2:名前2,..."
-# 例: "12345:田中,67890:山田"
-CHATWORK_MENTION_USERS_RAW = os.getenv("CHATWORK_MENTION_USERS", "")
-CHATWORK_MENTION_USERS = []
-if CHATWORK_MENTION_USERS_RAW:
-    for item in CHATWORK_MENTION_USERS_RAW.split(","):
-        if ":" in item:
-            user_id, name = item.strip().split(":", 1)
-            CHATWORK_MENTION_USERS.append((user_id.strip(), name.strip()))
+# ファムタイズオン (8892649) は除外
+CHATWORK_MENTION_USERS = [
+    ("11055639", "BaoNTV"),
+    ("11055644", "Nguyen Duc Thang"),
+    ("11055661", "MinhDV"),
+]
 
 
 def get_s3_client():
