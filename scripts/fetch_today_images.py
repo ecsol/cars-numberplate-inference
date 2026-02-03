@@ -853,26 +853,24 @@ def backup_and_process(
         # --force モード: .detect/ を強制再作成（既存ファイルを上書き）
         # ============================================================
         # 処理内容:
-        #   - branch_no=1 のみ: .detect/ にバナーのみ（マスクなし）で上書き
-        #   - branch_no!=1: スキップ（処理しない）
+        #   - branch_no=1: .detect/ にバナーのみ（マスクなし）で上書き
+        #   - branch_no!=1: .detect/ にマスクのみ（バナー【絶対禁止】）で上書き
         # 入力:
         #   - .backup から元画像を取得（検出精度のため）
         # 出力:
-        #   - .detect/ にバナーのみの画像を保存
+        #   - .detect/ に処理済み画像を保存
         #   - 元画像は変更しない
+        # 用途:
+        #   - 間違ってバナーが付いた.detect/ファイルを修正
         # ============================================================
         if force:
-            # branch_no=1 以外はスキップ
-            if not is_first_image:
-                logger.debug(f"--force: branch_no!=1 のためスキップ")
-                return {
-                    "status": "skip",
-                    "reason": "force_not_first",
-                    "path": full_path,
-                }
+            # branch_no=1: バナーのみ（マスクなし）
+            # branch_no!=1: マスクのみ（バナー【絶対禁止】）
+            use_masking = not is_first_image  # branch_no!=1 はマスクあり
+            use_banner = is_first_image  # branch_no=1 のみバナー
 
             logger.debug(
-                f"--force: .detect/にバナーのみ上書き (masking=False, banner=True)"
+                f"--force: .detect/再作成 (masking={use_masking}, banner={use_banner})"
             )
 
             if BACKUP_S3_BUCKET:
@@ -906,8 +904,8 @@ def backup_and_process(
                     seg_model=seg_model,
                     pose_model=pose_model,
                     mask_image=mask_image,
-                    is_masking=False,  # マスクなし（バナーのみ）
-                    add_banner=True,  # バナーあり
+                    is_masking=use_masking,  # branch_no!=1: マスクあり
+                    add_banner=use_banner,  # branch_no=1のみバナー【それ以外は絶対禁止】
                 )
 
                 detect_s3_key = f"webroot/{dir_part}/.detect/{file_name}"
@@ -940,8 +938,8 @@ def backup_and_process(
                     seg_model=seg_model,
                     pose_model=pose_model,
                     mask_image=mask_image,
-                    is_masking=False,  # マスクなし（バナーのみ）
-                    add_banner=True,  # バナーあり
+                    is_masking=use_masking,  # branch_no!=1: マスクあり
+                    add_banner=use_banner,  # branch_no=1のみバナー【それ以外は絶対禁止】
                 )
 
             result["status"] = "success"
