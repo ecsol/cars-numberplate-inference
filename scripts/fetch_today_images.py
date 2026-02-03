@@ -15,6 +15,7 @@ Usage:
     python fetch_today_images.py --days-ago 1      # 昨日の画像
     python fetch_today_images.py --limit 50        # 最大50件処理
     python fetch_today_images.py --days-ago 7 --limit 100
+    python fetch_today_images.py --path /1554913G  # 特定フォルダを直接処理
 
 crontab: * * * * * /path/to/venv/bin/python /path/to/fetch_today_images.py
 """
@@ -519,6 +520,69 @@ def load_models():
 # ======================
 # データベース
 # ======================
+def get_images_from_path(folder_path: str) -> list:
+    """
+    指定フォルダから画像ファイルを取得（DBをバイパス）
+    
+    Args:
+        folder_path: フォルダパス (例: /1554913G または 1554913G)
+    
+    Returns:
+        list: [(idx, None, car_id, branch_no, path, None, None), ...]
+              get_images_by_dateと同じ形式で返す
+    """
+    # パスを正規化
+    folder_path = folder_path.strip("/")
+    full_folder_path = os.path.join(S3_MOUNT, "upfile", folder_path)
+    
+    if not os.path.exists(full_folder_path):
+        logger.error(f"フォルダが存在しません: {full_folder_path}")
+        return []
+    
+    # car_id を抽出（フォルダ名）
+    car_id = os.path.basename(folder_path)
+    
+    # 画像ファイルを取得
+    images = []
+    image_extensions = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
+    
+    for idx, file_name in enumerate(sorted(os.listdir(full_folder_path)), start=1):
+        file_path = os.path.join(full_folder_path, file_name)
+        
+        # ファイルのみ、画像拡張子のみ
+        if not os.path.isfile(file_path):
+            continue
+        
+        _, ext = os.path.splitext(file_name)
+        if ext.lower() not in image_extensions:
+            continue
+        
+        # .backup, .detect フォルダ内はスキップ
+        if ".backup" in file_path or ".detect" in file_path:
+            continue
+        
+        # branch_noをファイル名から推測（末尾の数字）
+        # 例: 1554913G133.jpg → branch_no = 1 (最初の画像)
+        # ソート順で決定: idx=1 が branch_no=1
+        branch_no = idx
+        
+        # DBと同じ形式: /upfile/car_id/filename.jpg
+        relative_path = f"/upfile/{folder_path}/{file_name}"
+        
+        images.append((
+            idx,           # id (ダミー)
+            None,          # car_cd
+            car_id,        # inspresultdata_cd
+            branch_no,     # branch_no
+            relative_path, # save_file_name
+            None,          # created
+            None,          # modified
+        ))
+    
+    logger.info(f"フォルダスキャン: {full_folder_path} - {len(images)}枚")
+    return images
+
+
 def get_images_by_date(
     target_date: datetime.date, last_fetch_time: Optional[datetime] = None
 ) -> list:
@@ -896,6 +960,8 @@ def main():
   python fetch_today_images.py --date 2026-02-03 # 特定の日付を指定
   python fetch_today_images.py --limit 50        # 最大50件処理
   python fetch_today_images.py --days-ago 7 --limit 100
+  python fetch_today_images.py --path /1554913G  # 特定フォルダを直接処理（DBバイパス）
+  python fetch_today_images.py --path 1554913G   # 先頭/は省略可
         """,
     )
     parser.add_argument(
@@ -915,6 +981,12 @@ def main():
         type=int,
         default=10,
         help="1回の実行で処理する最大車両数 [デフォルト: 10]",
+    )
+    parser.add_argument(
+        "--path",
+        type=str,
+        default=None,
+        help="特定フォルダのみ処理 (例: /1554913G または 1554913G) - DBをバイパス",
     )
 
     args = parser.parse_args()
@@ -939,7 +1011,10 @@ def main():
 
     logger.info("=" * 60)
     logger.info(f"バッチ処理開始 (Two-Stage)")
-    logger.info(f"  対象日: {target_date}")
+    if args.path:
+        logger.info(f"  対象フォルダ: {args.path}")
+    else:
+        logger.info(f"  対象日: {target_date}")
     logger.info(f"  最大処理数: {args.limit}件")
     logger.info(f"  S3マウント: {S3_MOUNT}")
     logger.info(f"  バックアップ: {backup_location}")
@@ -962,32 +1037,43 @@ def main():
     tracker.cleanup_old_files(LOG_RETENTION_DAYS)
     cleanup_old_logs(LOG_DIR, LOG_RETENTION_DAYS)
 
-    # 既存のトラッキング統計
-    existing_stats = tracker.get_stats(target_date)
-    logger.info(
-        f"トラッキング状況: 処理済み {existing_stats['total']}件 "
-        f"(成功: {existing_stats['success']}, エラー: {existing_stats['error']})"
-    )
-
-    # 最後のDB取得時刻を取得（増分取得でDB負荷軽減）
-    last_fetch_time = tracker.get_last_processed_time(target_date)
-    if last_fetch_time:
-        logger.info(
-            f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル"
-        )
+    # --path モードか通常モードかで処理を分岐
+    if args.path:
+        # フォルダ直接指定モード（DBバイパス）
+        logger.info(f"フォルダ直接モード: {args.path}")
+        images = get_images_from_path(args.path)
+        
+        if not images:
+            logger.info(f"フォルダに画像がありません: {args.path}")
+            return
     else:
-        logger.info("初回実行: 全件取得")
+        # 通常モード（DB取得）
+        # 既存のトラッキング統計
+        existing_stats = tracker.get_stats(target_date)
+        logger.info(
+            f"トラッキング状況: 処理済み {existing_stats['total']}件 "
+            f"(成功: {existing_stats['success']}, エラー: {existing_stats['error']})"
+        )
 
-    # 画像を取得
-    images = get_images_by_date(
-        target_date=target_date, last_fetch_time=last_fetch_time
-    )
+        # 最後のDB取得時刻を取得（増分取得でDB負荷軽減）
+        last_fetch_time = tracker.get_last_processed_time(target_date)
+        if last_fetch_time:
+            logger.info(
+                f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル"
+            )
+        else:
+            logger.info("初回実行: 全件取得")
 
-    if not images:
-        logger.info(f"{target_date} の画像はありません")
-        return
+        # 画像を取得
+        images = get_images_by_date(
+            target_date=target_date, last_fetch_time=last_fetch_time
+        )
 
-    logger.info(f"DB取得: {len(images)}件")
+        if not images:
+            logger.info(f"{target_date} の画像はありません")
+            return
+
+        logger.info(f"DB取得: {len(images)}件")
 
     # 車両ごとにグループ化
     car_images = {}
@@ -1041,7 +1127,8 @@ def main():
         first_file_path = car_files[0]["path"]
         car_dir = os.path.dirname(first_file_path) + "/"  # /upfile/1041/8430/
 
-        if tracker.has_car_any_processed(target_date, car_dir):
+        # --path モードではトラッキングチェックをスキップ（明示的な再処理）
+        if not args.path and tracker.has_car_any_processed(target_date, car_dir):
             stats["skip_tracked"] += len(car_files)
             logger.debug(f"車両スキップ（処理中）: {car_key} (フォルダ: {car_dir})")
             continue
@@ -1075,16 +1162,17 @@ def main():
                 # 処理成功した画像を記録
                 car_images.append((file_info["branch_no"] or 999, file_info["path"]))
 
-                # トラッキングに記録
-                tracker.mark_processed(
-                    target_date=target_date,
-                    file_id=file_id,
-                    path=file_info["path"],
-                    status="success",
-                    detections=result.get("detections", 0),
-                    is_first=is_first,
-                    branch_no=file_info["branch_no"],
-                )
+                # トラッキングに記録（--pathモードではスキップ）
+                if not args.path:
+                    tracker.mark_processed(
+                        target_date=target_date,
+                        file_id=file_id,
+                        path=file_info["path"],
+                        status="success",
+                        detections=result.get("detections", 0),
+                        is_first=is_first,
+                        branch_no=file_info["branch_no"],
+                    )
 
                 logger.success(
                     f"{file_info['path']} "
@@ -1096,15 +1184,16 @@ def main():
                 stats["error"] += 1
                 car_error += 1
 
-                # エラーもトラッキングに記録
-                tracker.mark_processed(
-                    target_date=target_date,
-                    file_id=file_id,
-                    path=file_info["path"],
-                    status="error",
-                    branch_no=file_info["branch_no"],
-                    error_reason=result.get("reason", "unknown"),
-                )
+                # エラーもトラッキングに記録（--pathモードではスキップ）
+                if not args.path:
+                    tracker.mark_processed(
+                        target_date=target_date,
+                        file_id=file_id,
+                        path=file_info["path"],
+                        status="error",
+                        branch_no=file_info["branch_no"],
+                        error_reason=result.get("reason", "unknown"),
+                    )
 
                 logger.error(f"{file_info['path']} - {result.get('reason', 'unknown')}")
 
@@ -1135,13 +1224,15 @@ def main():
     logger.info(f"  スキップ（処理済み）: {stats['skip_tracked']}件")
     logger.info(f"  スキップ（その他）: {stats['skip_other']}件")
 
-    # 最終トラッキング統計
-    final_stats = tracker.get_stats(target_date)
-    logger.info(f"トラッキング累計: {final_stats['total']}件処理済み")
+    # --path モードではトラッキング更新をスキップ
+    if not args.path:
+        # 最終トラッキング統計
+        final_stats = tracker.get_stats(target_date)
+        logger.info(f"トラッキング累計: {final_stats['total']}件処理済み")
 
-    # last_fetch_timeを更新（次回は新規ファイルのみ取得）
-    tracker.set_last_processed_time(target_date, datetime.now())
-    logger.info(f"次回増分取得: {datetime.now().strftime('%H:%M:%S')} 以降")
+        # last_fetch_timeを更新（次回は新規ファイルのみ取得）
+        tracker.set_last_processed_time(target_date, datetime.now())
+        logger.info(f"次回増分取得: {datetime.now().strftime('%H:%M:%S')} 以降")
     logger.info("=" * 60)
 
     # Chatwork通知（処理があった場合のみ）
