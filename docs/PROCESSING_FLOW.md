@@ -22,28 +22,29 @@ Script `fetch_today_images.py` xử lý ảnh xe từ database, detect biển s�
 - Backup chỉ tạo MỘT LẦN - không bao giờ ghi đè
 - Nếu backup đã tồn tại → restore từ backup trước khi xử lý
 
-### 2. First File (is_first=True)
+### 2. First File (is_first=True) - XỬ LÝ 2 LẦN
 ```
 Input:  /upfile/1041/8430/xxx.jpg (file gốc)
-Output: /upfile/1041/8430/xxx.jpg (GHI ĐÈ file gốc)
 
-Processing:
-- Detect biển số (YOLO)
-- is_masking = FALSE (KHÔNG che biển số)
-- add_banner = TRUE (có banner overlay)
-- Ghi đè trực tiếp lên file gốc
+Output 1: /upfile/1041/8430/.detect/xxx.jpg
+  - is_masking = TRUE (có che biển số)
+  - add_banner = TRUE (có banner overlay)
+
+Output 2: /upfile/1041/8430/xxx.jpg (GHI ĐÈ file gốc)
+  - is_masking = FALSE (KHÔNG che biển số)
+  - add_banner = TRUE (có banner overlay)
+  - Dùng để hiển thị trên website (không che biển số)
 ```
 
 ### 3. Non-First Files (is_first=False)
 ```
 Input:  /upfile/1041/8430/yyy.jpg (file gốc)
-Output: /upfile/1041/8430/.detect/yyy.jpg (file mới trong .detect/)
+Output: /upfile/1041/8430/.detect/yyy.jpg
 
 Processing:
 - Detect biển số (YOLO)
 - is_masking = TRUE (có che biển số)
 - add_banner = TRUE (có banner overlay)
-- Lưu vào .detect/ folder
 - File gốc KHÔNG BỊ THAY ĐỔI
 ```
 
@@ -102,23 +103,28 @@ Processing:
 ```
 Before processing:
 /upfile/1041/8430/
-├── 10418430001.jpg  (first - branch_no=1)
+├── 10418430001.jpg  (first - branch_no=1, determined by DB)
 ├── 10418430002.jpg  (branch_no=2)
 └── 10418430003.jpg  (branch_no=3)
 
 After processing:
 /upfile/1041/8430/
-├── 10418430001.jpg  ← Banner ONLY (no mask), overwritten
+├── 10418430001.jpg  ← Banner ONLY (no mask) - for website display
 ├── 10418430002.jpg  ← UNCHANGED (original)
 ├── 10418430003.jpg  ← UNCHANGED (original)
 ├── .backup/
-│   ├── 10418430001.jpg  ← Backup of original
-│   ├── 10418430002.jpg  ← Backup of original
-│   └── 10418430003.jpg  ← Backup of original
+│   ├── 10418430001.jpg  ← Backup of original (clean)
+│   ├── 10418430002.jpg  ← Backup of original (clean)
+│   └── 10418430003.jpg  ← Backup of original (clean)
 └── .detect/
-    ├── 10418430002.jpg  ← Masked version
-    └── 10418430003.jpg  ← Masked version
+    ├── 10418430001.jpg  ← Masked + Banner (full processing)
+    ├── 10418430002.jpg  ← Masked + Banner
+    └── 10418430003.jpg  ← Masked + Banner
 ```
+
+**Giải thích:**
+- **Website hiển thị**: Dùng `10418430001.jpg` (banner only, không che biển số) - ảnh đại diện
+- **Download/Export**: Dùng `.detect/` folder (tất cả đã được mask)
 
 ## Configuration
 
@@ -129,8 +135,8 @@ Environment variables:
 
 ## Scripts
 
-| Script | Purpose |
-|--------|---------|
-| `fetch_today_images.py` | Main processing script |
-| `restore_from_backup.py` | Restore originals from backup |
-| `process_image_v2.py` | Image detection & masking logic |
+| Script                   | Purpose                         |
+| ------------------------ | ------------------------------- |
+| `fetch_today_images.py`  | Main processing script          |
+| `restore_from_backup.py` | Restore originals from backup   |
+| `process_image_v2.py`    | Image detection & masking logic |
