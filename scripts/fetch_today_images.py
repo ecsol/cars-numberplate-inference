@@ -683,10 +683,17 @@ def backup_and_process(
     # .detect/ フォルダパス
     dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
 
+    # バナーは first file (branch_no=1) のみ
+    # - First file: .detect/ = mask + banner, original = banner only
+    # - Other files: .detect/ = mask only (no banner), original = unchanged
+    add_banner_to_detect = is_first_image
+
     # 処理実行（Two-Stage: Seg + Pose）
     try:
-        # === 全ファイル共通: .detect/ にマスク＋バナー版を保存 ===
-        logger.debug(f"Two-Stage推論開始: .detect/ 出力 (masking=True, banner=True)")
+        # === .detect/ にマスク版を保存 ===
+        logger.debug(
+            f"Two-Stage推論開始: .detect/ 出力 (masking=True, banner={add_banner_to_detect})"
+        )
 
         # S3の場合: tempファイルに出力後、boto3でアップロード
         # ローカルの場合: 直接.detect/に出力
@@ -706,7 +713,7 @@ def backup_and_process(
                 pose_model=pose_model,
                 mask_image=mask_image,
                 is_masking=True,  # マスクあり
-                add_banner=True,  # バナーあり
+                add_banner=add_banner_to_detect,  # First fileのみバナー
             )
 
             # S3にアップロード
@@ -733,7 +740,7 @@ def backup_and_process(
                 pose_model=pose_model,
                 mask_image=mask_image,
                 is_masking=True,  # マスクあり
-                add_banner=True,  # バナーあり
+                add_banner=add_banner_to_detect,  # First fileのみバナー
             )
 
         # === First fileのみ: 元ファイルにバナーのみ版を上書き ===
