@@ -157,7 +157,8 @@ def build_processing_summary(
         target_date: 対象日
         stats: 統計情報
         car_results: 車両ごとの処理結果
-            [(car_id, success_count, error_count, detections, first_image_path), ...]
+            [(car_id, success_count, error_count, detections, images_list), ...]
+            images_list: [(branch_no, path), ...] sorted by branch_no
 
     Returns:
         str: Chatwork用メッセージ
@@ -174,15 +175,13 @@ def build_processing_summary(
 
     if car_results:
         lines.append("[info][title]📊 車両別結果[/title]")
-        for car_id, success, error, detections, first_image_path in car_results[:10]:
+        for car_id, success, error, detections, car_images in car_results[:10]:
             status_icon = "✅" if error == 0 else "⚠️"
-            lines.append(
-                f"{status_icon} {car_id}: {success}枚処理, 検出{detections}件"
-            )
-            # 最初の画像のURLを追加
-            if first_image_path:
-                image_url = f"{IMAGE_BASE_URL}{first_image_path}"
-                lines.append(f"   {image_url}")
+            lines.append(f"{status_icon} {car_id}: {success}枚処理, 検出{detections}件")
+            # 全画像のURLをbranch_no順で表示
+            for branch_no, path in car_images:
+                image_url = f"{IMAGE_BASE_URL}{path}"
+                lines.append(f"  {branch_no}. {image_url}")
             lines.append("")
 
         if len(car_results) > 10:
@@ -984,7 +983,7 @@ def main():
         car_success = 0
         car_error = 0
         car_detections = 0
-        car_first_image_path = None  # 最初に処理成功した画像のパス
+        car_images = []  # 処理成功した画像のリスト [(branch_no, path), ...]
 
         for idx, file_info in enumerate(car_files):
             file_id = file_info["id"]
@@ -1009,9 +1008,8 @@ def main():
                 processed_count += 1
                 car_success += 1
                 car_detections += result.get("detections", 0)
-                # branch_no=1の画像パスを記録（バナー付きの代表画像）
-                if file_info["branch_no"] == 1:
-                    car_first_image_path = file_info["path"]
+                # 処理成功した画像を記録
+                car_images.append((file_info["branch_no"] or 999, file_info["path"]))
 
                 # トラッキングに記録
                 tracker.mark_processed(
@@ -1055,8 +1053,10 @@ def main():
 
         # 車両処理完了後、結果を記録（処理があった場合のみ）
         if car_success > 0 or car_error > 0:
+            # branch_noでソートしてから記録
+            car_images.sort(key=lambda x: x[0])
             car_results.append(
-                (car_key, car_success, car_error, car_detections, car_first_image_path)
+                (car_key, car_success, car_error, car_detections, car_images)
             )
 
     # 最終統計
