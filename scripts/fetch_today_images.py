@@ -1066,11 +1066,30 @@ def backup_and_process(
     file_name = os.path.basename(full_path)
     relative_path = file_path.lstrip("/")  # upfile/1041/8430/xxx.jpg
 
-    # --force モード: バックアップ処理をスキップ（元画像をそのまま使用）
+    # バックアップ処理（--forceモードでもバックアップがなければ作成）
     if force:
-        logger.debug(
-            f"--force モード: バックアップスキップ、現在の画像から.detect/作成"
-        )
+        # --force モード: バックアップがなければ作成、あればそれを使用
+        if BACKUP_S3_BUCKET:
+            dir_part = os.path.dirname(relative_path)
+            s3_key = f"webroot/{dir_part}/.backup/{file_name}"
+            try:
+                if not s3_backup_exists(s3_key):
+                    logger.debug(
+                        f"--force: バックアップなし、作成: s3://{BACKUP_S3_BUCKET}/{s3_key}"
+                    )
+                    s3_upload_backup(full_path, s3_key)
+            except Exception as e:
+                logger.warn(f"--force: バックアップ作成失敗: {e}")
+        elif BACKUP_DIR:
+            backup_path = os.path.join(BACKUP_DIR, relative_path)
+            if not os.path.exists(backup_path):
+                try:
+                    backup_dir = os.path.dirname(backup_path)
+                    os.makedirs(backup_dir, exist_ok=True)
+                    shutil.copy(full_path, backup_path)
+                    logger.debug(f"--force: バックアップ作成: {backup_path}")
+                except Exception as e:
+                    logger.warn(f"--force: バックアップ作成失敗: {e}")
     else:
         # === 通常モード: 初回のみバックアップ作成（復元は手動restore_from_backup.pyで） ===
         # バックアップモード判定
@@ -1192,6 +1211,7 @@ def backup_and_process(
         #     - 元画像は変更しない
         # 入力:
         #   - .backup から元画像を取得（検出精度のため）
+        #   - .backup がなければ先に作成してから使用
         # 出力:
         #   - .detect/ に処理済み画像を保存
         #   - branch_no=1: 元画像にバナーのみ版を上書き

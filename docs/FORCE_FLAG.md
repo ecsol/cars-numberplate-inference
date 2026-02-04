@@ -124,27 +124,31 @@ python fetch_today_images.py --force
 
 ## Input Source Logic
 
-### Thứ tự ưu tiên input
+### Thứ tự xử lý input (--force mode)
 
 ```python
+# --force mode: Tự động tạo backup nếu chưa có, sau đó dùng backup làm input
+
 if BACKUP_S3_BUCKET:
-    # 1. Ưu tiên: Download từ S3 .backup
     backup_s3_key = f"webroot/{dir_part}/.backup/{file_name}"
-    if s3_backup_exists(backup_s3_key):
-        input_path = download_from_s3(backup_s3_key)
-    else:
-        # Fallback: Dùng original (có warning)
-        input_path = full_path
-        logger.warn("バックアップなし、現在の画像を使用")
+    
+    # Bước 1: Tạo backup nếu chưa có
+    if not s3_backup_exists(backup_s3_key):
+        s3_upload_backup(full_path, backup_s3_key)
+        logger.debug("--force: バックアップなし、作成")
+    
+    # Bước 2: Download backup làm input
+    input_path = download_from_s3(backup_s3_key)
 else:
-    # 2. Local backup
     backup_path = os.path.join(BACKUP_DIR, relative_path)
-    if os.path.exists(backup_path):
-        input_path = backup_path
-    else:
-        # Fallback: Dùng original (có warning)
-        input_path = full_path
-        logger.warn("バックアップなし、現在の画像を使用")
+    
+    # Bước 1: Tạo backup nếu chưa có
+    if not os.path.exists(backup_path):
+        shutil.copy(full_path, backup_path)
+        logger.debug("--force: バックアップ作成")
+    
+    # Bước 2: Dùng backup làm input
+    input_path = backup_path
 ```
 
 ### Tại sao dùng .backup làm input?
@@ -154,6 +158,7 @@ else:
 | **Detection accuracy** | File `.backup` là ảnh gốc chưa qua xử lý, detection chính xác hơn |
 | **Tránh artifacts**    | Nếu dùng original đã có banner → detection có thể bị ảnh hưởng    |
 | **Consistency**        | Đảm bảo kết quả giống nhau mỗi lần chạy                           |
+| **Auto-create**        | `--force` tự động tạo backup nếu chưa có                          |
 
 ---
 
