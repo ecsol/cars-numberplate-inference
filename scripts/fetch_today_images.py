@@ -93,6 +93,13 @@ PLATE_MASK_PATH = os.getenv(
     "PLATE_MASK_PATH", str(PROJECT_DIR / "assets" / "plate_mask.png")
 )
 
+# 検出スキップ対象のbranch_no
+# これらの画像はナンバープレート検出をスキップし、そのまま.detect/にコピーする
+# - 30: メーターパネル (Photo30)
+# - 31: コーションプレート (Photo31)
+# - 32: 車検証 (Photo32)
+SKIP_DETECTION_BRANCH_NOS = {30, 31, 32}
+
 # ログディレクトリ（デフォルト: プロジェクトフォルダ内 logs/）
 _log_dir_env = os.getenv("LOG_DIR", "")
 if _log_dir_env:
@@ -1023,6 +1030,7 @@ def backup_and_process(
     is_first_image: bool = False,
     force_overlay: bool = False,
     force: bool = False,
+    branch_no: Optional[int] = None,
 ) -> dict:
     """
     画像をバックアップして処理
@@ -1037,18 +1045,23 @@ def backup_and_process(
     ║    → バナー追加【絶対禁止】                                      ║
     ║    → マスク処理のみ（.detect/に保存）                            ║
     ║    → 元画像は変更しない                                          ║
+    ║                                                                  ║
+    ║  ● branch_no=30,31,32 (特殊画像):                                ║
+    ║    → 検出スキップ、そのまま.detect/にコピー                      ║
     ╚══════════════════════════════════════════════════════════════════╝
 
     処理フロー:
     1. .backupフォルダがなければ作成し、元画像をバックアップ
     2. .backupに既にファイルがあればスキップ（バックアップ済み）
     3. 処理実行（.backupから入力して検出精度を確保）
+    4. branch_no=30,31,32は検出スキップ、コピーのみ
 
     Args:
         file_path: S3上のファイルパス (例: /upfile/1007/4856/20220824190333_1.jpg)
         is_first_image: 最初の画像かどうか (True=branch_no=1, バナー追加対象)
         force_overlay: 強制的にバナーを追加するか（branch_no=1のみ有効）
         force: .detect/が存在しても強制的に再処理（branch_no=1のみ有効）
+        branch_no: 画像のbranch_no（検出スキップ判定用）
 
     Returns:
         dict: 処理結果
@@ -1149,6 +1162,92 @@ def backup_and_process(
 
     # .detect/ フォルダパス
     dir_part = os.path.dirname(relative_path)  # upfile/1041/8430
+
+    # ============================================================
+    # 検出スキップ対象のbranch_no (30, 31, 32)
+    # ============================================================
+    # これらは車両画像ではないため、ナンバープレート検出をスキップ
+    # - 30: メーターパネル
+    # - 31: コーションプレート
+    # - 32: 車検証
+    # 処理: バックアップ作成 → そのまま.detect/にコピー（検出なし）
+    # ============================================================
+    skip_detection = branch_no in SKIP_DETECTION_BRANCH_NOS if branch_no else False
+
+    if skip_detection:
+        logger.debug(f"検出スキップ: branch_no={branch_no} (コピーのみ)")
+
+        # バックアップ作成（必須）
+        if BACKUP_S3_BUCKET:
+            backup_s3_key = f"webroot/{dir_part}/.backup/{file_name}"
+            try:
+                if not s3_backup_exists(backup_s3_key):
+                    s3_upload_backup(full_path, backup_s3_key)
+                    logger.debug(f"バックアップ作成: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}")
+            except Exception as e:
+                logger.warn(f"バックアップ作成失敗: {e}")
+
+            # .detect/にコピー（検出なし、そのままコピー）
+            detect_s3_key = f"webroot/{dir_part}/.detect/{file_name}"
+            try:
+                s3_upload_backup(full_path, detect_s3_key)
+                logger.debug(f".detect/コピー完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}")
+            except Exception as e:
+                logger.error(f".detect/コピー失敗: {e}")
+                return {
+                    "status": "error",
+                    "reason": f"detect_copy_failed: {e}",
+                    "path": full_path,
+                }
+
+            return {
+                "status": "success",
+                "path": full_path,
+                "output_path": f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}",
+                "detections": 0,
+                "skip_detection": True,
+                "branch_no": branch_no,
+            }
+        elif BACKUP_DIR:
+            backup_path = os.path.join(BACKUP_DIR, relative_path)
+            if not os.path.exists(backup_path):
+                try:
+                    backup_dir_path = os.path.dirname(backup_path)
+                    os.makedirs(backup_dir_path, exist_ok=True)
+                    shutil.copy(full_path, backup_path)
+                    logger.debug(f"バックアップ作成: {backup_path}")
+                except Exception as e:
+                    logger.warn(f"バックアップ作成失敗: {e}")
+
+            # .detect/にコピー（検出なし、そのままコピー）
+            detect_dir = os.path.join(os.path.dirname(full_path), ".detect")
+            detect_output_path = os.path.join(detect_dir, file_name)
+            try:
+                os.makedirs(detect_dir, exist_ok=True)
+                shutil.copy(full_path, detect_output_path)
+                logger.debug(f".detect/コピー完了: {detect_output_path}")
+            except Exception as e:
+                logger.error(f".detect/コピー失敗: {e}")
+                return {
+                    "status": "error",
+                    "reason": f"detect_copy_failed: {e}",
+                    "path": full_path,
+                }
+
+            return {
+                "status": "success",
+                "path": full_path,
+                "output_path": detect_output_path,
+                "detections": 0,
+                "skip_detection": True,
+                "branch_no": branch_no,
+            }
+        else:
+            return {
+                "status": "error",
+                "reason": "no_backup_config",
+                "path": full_path,
+            }
 
     # バナーの判定（通常モード用）:
     # - First file (branch_no=1) のみバナー追加
@@ -1889,6 +1988,7 @@ def main():
                 is_first_image=is_first,
                 force_overlay=args.force_overlay,
                 force=args.force,
+                branch_no=file_info["branch_no"],
             )
 
             status = result.get("status", "error")
