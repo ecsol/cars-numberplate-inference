@@ -1,310 +1,237 @@
-# --force Flag Documentation
+# --force & --force-overlay Documentation
 
 ## Overview
 
-Flag `--force` được sử dụng để **tái tạo lại thư mục `.detect/`** và **cập nhật original với banner-only** (cho `branch_no=1`).
+Script `fetch_today_images.py` có 2 flag đặc biệt để xử lý lại ảnh:
+
+| Flag | Mục đích |
+| ---- | -------- |
+| `--force` | Tái tạo `.detect/` + overlay banner lên original (branch_no=1) |
+| `--force-overlay` | Chỉ overlay banner lên original (branch_no=1), không tạo `.detect/` |
+
+---
+
+## So sánh chi tiết
+
+| Đặc điểm | Normal Mode | `--force` | `--force-overlay` |
+| -------- | ----------- | --------- | ----------------- |
+| **Mục đích** | Xử lý ảnh mới | Tái tạo tất cả | Chỉ thêm banner |
+| **Tạo backup** | ✅ Có (nếu chưa có) | ✅ Có (nếu chưa có) | ✅ Có (nếu chưa có) |
+| **Tạo `.detect/`** | ✅ Có | ✅ Có (overwrite) | ❌ Không |
+| **Masking** | ✅ Có (trong .detect/) | ✅ Có (trong .detect/) | ❌ Không |
+| **Overlay banner** | ✅ branch_no=1 only | ✅ branch_no=1 only | ✅ branch_no=1 only |
+| **Input cho .detect/** | `.backup` | `.backup` | N/A |
+| **Input cho overlay** | `.backup` | Original hiện tại | Original hiện tại |
+| **Skip nếu đã có** | ✅ Skip nếu .detect/ có | ❌ Không skip | ❌ Không skip |
+
+---
+
+# `--force` Flag
+
+## Mục đích
+
+Tái tạo lại `.detect/` và overlay banner lên original cho `branch_no=1`.
 
 ```bash
 python fetch_today_images.py --force
-```
-
-## Mục đích sử dụng
-
-| Use Case          | Giải thích                                              |
-| ----------------- | ------------------------------------------------------- |
-| Sửa lỗi banner    | Khi `.detect/` của `branch_no != 1` bị thêm banner nhầm |
-| Cập nhật model    | Sau khi train model mới, cần re-process tất cả          |
-| Debug/Test        | Kiểm tra kết quả detection mà không ảnh hưởng original  |
-| Fix detection lỗi | Khi model cũ detect sai, cần chạy lại với model mới     |
-
----
-
-## So sánh với các mode khác
-
-| Đặc điểm                        | Normal Mode                | `--force` Mode               | `--force-overlay` Mode   |
-| ------------------------------- | -------------------------- | ---------------------------- | ------------------------ |
-| **Mục đích**                    | Xử lý ảnh mới              | Tái tạo `.detect/` + original | Thêm banner vào original |
-| **Kiểm tra `.detect/` tồn tại** | Skip nếu đã có             | **Overwrite**                | N/A                      |
-| **Tạo backup mới**              | Có (nếu chưa có)           | **Skip**                     | Skip                     |
-| **Thay đổi original (branch_no=1)** | banner only            | **banner only** ✅           | banner only              |
-| **Output**                      | `.detect/` + original      | `.detect/` + original        | original only            |
-| **Đầu vào**                     | `.backup`                  | `.backup`                    | original hiện tại        |
-
----
-
-## Processing Rules
-
-### Quy tắc xử lý theo branch_no
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         --force MODE                                 │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  branch_no = 1:                                                      │
-│    Input:  .backup/xxx.jpg                                          │
-│    Output 1: .detect/xxx.jpg                                        │
-│      - is_masking = TRUE  ✅                                        │
-│      - add_banner = TRUE  ✅                                        │
-│    Output 2: Original (overwrite)                                   │
-│      - is_masking = FALSE ✅ (không che biển số)                    │
-│      - add_banner = TRUE  ✅                                        │
-│                                                                      │
-│  branch_no != 1:                                                     │
-│    Input:  .backup/yyy.jpg                                          │
-│    Output: .detect/yyy.jpg                                          │
-│    Processing:                                                       │
-│      - is_masking = TRUE  ✅                                        │
-│      - add_banner = FALSE ⛔ (TUYỆT ĐỐI CẤM!)                       │
-│    Original: KHÔNG THAY ĐỔI                                         │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Bảng tóm tắt
-
-| branch_no | Input     | .detect/ Output        | .detect/ Masking | .detect/ Banner | Original Output      |
-| --------- | --------- | ---------------------- | ---------------- | --------------- | -------------------- |
-| `= 1`     | `.backup` | overwrite              | ✅ Có            | ✅ Có           | ✅ banner only (overwrite) |
-| `!= 1`    | `.backup` | overwrite              | ✅ Có            | ⛔ **CẤM**      | ❌ Không đổi         |
-
----
-
-## Flow Diagram
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    START: --force flag called                        │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  1. SKIP backup creation                                            │
-│     - Không tạo backup mới                                          │
-│     - Sử dụng backup hiện có (nếu có)                               │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-                    ┌──────────────┴──────────────┐
-                    │      branch_no == 1?         │
-                    └──────────────┬──────────────┘
-                          │                │
-                        YES               NO
-                          │                │
-                          ▼                ▼
-┌─────────────────────────────────┐  ┌─────────────────────────────────────┐
-│  2a. FIRST FILE (branch_no=1)   │  │  2b. NON-FIRST FILE (branch_no!=1)  │
-│                                 │  │                                     │
-│  Input: .backup/xxx.jpg         │  │  Input: .backup/yyy.jpg             │
-│                                 │  │                                     │
-│  Output 1: .detect/xxx.jpg      │  │  Output: .detect/yyy.jpg            │
-│    - mask = TRUE                │  │    - mask = TRUE                    │
-│    - banner = TRUE              │  │    - banner = FALSE ⛔              │
-│                                 │  │                                     │
-│  Output 2: Original (overwrite) │  │  Original: KHÔNG THAY ĐỔI          │
-│    - mask = FALSE               │  │                                     │
-│    - banner = TRUE ✅           │  │                                     │
-└─────────────────────────────────┘  └─────────────────────────────────────┘
-                          │                │
-                          └────────┬───────┘
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│  3. Kết thúc xử lý                                                  │
-│     - branch_no=1: Original được ghi đè với banner-only             │
-│     - branch_no!=1: Original giữ nguyên                             │
-└─────────────────────────────────────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                              END                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Input Source Logic
-
-### Thứ tự xử lý input (--force mode)
-
-```python
-# --force mode: Tự động tạo backup nếu chưa có, sau đó dùng backup làm input
-
-if BACKUP_S3_BUCKET:
-    backup_s3_key = f"webroot/{dir_part}/.backup/{file_name}"
-    
-    # Bước 1: Tạo backup nếu chưa có
-    if not s3_backup_exists(backup_s3_key):
-        s3_upload_backup(full_path, backup_s3_key)
-        logger.debug("--force: バックアップなし、作成")
-    
-    # Bước 2: Download backup làm input
-    input_path = download_from_s3(backup_s3_key)
-else:
-    backup_path = os.path.join(BACKUP_DIR, relative_path)
-    
-    # Bước 1: Tạo backup nếu chưa có
-    if not os.path.exists(backup_path):
-        shutil.copy(full_path, backup_path)
-        logger.debug("--force: バックアップ作成")
-    
-    # Bước 2: Dùng backup làm input
-    input_path = backup_path
-```
-
-### Tại sao dùng .backup làm input?
-
-| Lý do                  | Giải thích                                                        |
-| ---------------------- | ----------------------------------------------------------------- |
-| **Detection accuracy** | File `.backup` là ảnh gốc chưa qua xử lý, detection chính xác hơn |
-| **Tránh artifacts**    | Nếu dùng original đã có banner → detection có thể bị ảnh hưởng    |
-| **Consistency**        | Đảm bảo kết quả giống nhau mỗi lần chạy                           |
-| **Auto-create**        | `--force` tự động tạo backup nếu chưa có                          |
-
----
-
-## Code Reference
-
-### Argument Definition
-
-```python
-# Line 1271-1275
-parser.add_argument(
-    "--force",
-    action="store_true",
-    help=".detect/が存在しても強制的に再処理",
-)
-```
-
-### Main Processing Logic
-
-```python
-# Line 910-995 in backup_and_process()
-if force:
-    # .detect/ は常にマスクあり
-    # branch_no=1: マスク+バナー
-    # branch_no!=1: マスクのみ（バナー【絶対禁止】）
-    use_masking = True  # .detect/ は常にマスクあり
-    use_banner = is_first_image  # branch_no=1 のみバナー
-    
-    # ... download from .backup ...
-    
-    result = process_image(
-        input_path=temp_input_path,
-        output_path=temp_detect_path,
-        seg_model=seg_model,
-        pose_model=pose_model,
-        mask_image=mask_image,
-        is_masking=True,      # .detect/は常にマスクあり
-        add_banner=use_banner,  # branch_no=1のみバナー【それ以外は絶対禁止】
-    )
-```
-
----
-
-## Usage Examples
-
-### 1. Re-process tất cả ảnh hôm nay
-
-```bash
 python fetch_today_images.py --force --limit 50
-```
-
-### 2. Re-process thư mục cụ thể
-
-```bash
 python fetch_today_images.py --path /1554913G --force
 ```
 
-### 3. Re-process ngày cụ thể
+## Flow xử lý
 
-```bash
-python fetch_today_images.py --date 2026-02-01 --force
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         --force MODE                              │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  BƯỚC 1: TẠO BACKUP (nếu chưa có) ← BẮT BUỘC                     │
+│    └─ copy original → .backup/                                   │
+│                                                                   │
+│  BƯỚC 2: TẠO .detect/ (từ BACKUP)                                │
+│    ├─ Input: .backup (ảnh gốc sạch, detection chính xác)         │
+│    ├─ Output: .detect/ (overwrite nếu đã có)                     │
+│    ├─ branch_no=1: mask + banner                                 │
+│    └─ branch_no≠1: mask ONLY (banner CẤM!)                       │
+│                                                                   │
+│  BƯỚC 3: OVERLAY BANNER (branch_no=1 only, SAU CÙNG)             │
+│    ├─ Input: ORIGINAL HIỆN TẠI (không phải backup)               │
+│    ├─ Output: ghi đè original                                    │
+│    ├─ masking = FALSE (không che biển số)                        │
+│    └─ banner = TRUE                                              │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### 4. Re-process với limit cao
+## Xử lý theo branch_no
 
-```bash
-python fetch_today_images.py --force --limit 500 --days-ago 1
-```
+| branch_no | .detect/ | Original |
+| --------- | -------- | -------- |
+| `= 1` | ✅ mask + banner (từ backup) | ✅ banner only (từ original hiện tại) |
+| `≠ 1` | ✅ mask ONLY (từ backup) | ❌ Không đổi |
+
+## Tại sao dùng backup cho .detect/?
+
+| Lý do | Giải thích |
+| ----- | ---------- |
+| **Detection accuracy** | Backup là ảnh gốc sạch, không có banner → detection chính xác |
+| **Tránh artifacts** | Original có thể đã có banner → detection bị ảnh hưởng |
+| **Consistency** | Kết quả giống nhau mỗi lần chạy |
+
+## Tại sao dùng original hiện tại cho overlay?
+
+| Lý do | Giải thích |
+| ----- | ---------- |
+| **Backup được bảo toàn** | Backup giữ nguyên để restore nếu cần |
+| **Cập nhật trạng thái hiện tại** | Overlay banner lên trạng thái hiện tại của ảnh |
 
 ---
 
-## Example Scenario
+# `--force-overlay` Flag
 
-### Trước khi chạy --force
+## Mục đích
+
+**CHỈ** overlay banner lên original cho `branch_no=1`. Không làm gì khác.
+
+```bash
+python fetch_today_images.py --force-overlay
+python fetch_today_images.py --force-overlay --limit 50
+```
+
+## Flow xử lý
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                     --force-overlay MODE                          │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  BƯỚC 1: KIỂM TRA branch_no                                      │
+│    └─ branch_no ≠ 1 → SKIP (không làm gì)                        │
+│                                                                   │
+│  BƯỚC 2: TẠO BACKUP (nếu chưa có) ← BẮT BUỘC                     │
+│    └─ copy original → .backup/                                   │
+│                                                                   │
+│  BƯỚC 3: OVERLAY BANNER                                          │
+│    ├─ Input: ORIGINAL HIỆN TẠI                                   │
+│    ├─ Output: GHI ĐÈ ORIGINAL                                    │
+│    ├─ masking = FALSE (KHÔNG che biển số)                        │
+│    └─ banner = TRUE                                              │
+│                                                                   │
+│  ❌ KHÔNG tạo .detect/                                           │
+│  ❌ KHÔNG masking                                                │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Xử lý theo branch_no
+
+| branch_no | Hành động |
+| --------- | --------- |
+| `= 1` | ✅ Tạo backup (nếu chưa có) → Overlay banner lên original |
+| `≠ 1` | ❌ SKIP hoàn toàn |
+
+---
+
+# Ví dụ thực tế
+
+## Trước khi chạy
 
 ```
 /upfile/1041/8430/
-├── 10418430001.jpg      ← Original (có banner - từ normal mode)
-├── 10418430002.jpg      ← Original (không đổi)
-├── 10418430003.jpg      ← Original (không đổi)
+├── 10418430001.jpg      ← Original (có thể có banner cũ)
+├── 10418430002.jpg      ← Original
+├── 10418430003.jpg      ← Original
 ├── .backup/
-│   ├── 10418430001.jpg  ← Backup gốc (clean)
-│   ├── 10418430002.jpg  ← Backup gốc (clean)
-│   └── 10418430003.jpg  ← Backup gốc (clean)
+│   ├── 10418430001.jpg  ← Backup gốc (clean, không banner)
+│   ├── 10418430002.jpg  ← Backup gốc
+│   └── 10418430003.jpg  ← Backup gốc
 └── .detect/
-    ├── 10418430001.jpg  ← ❌ CŨ: có thể sai (model cũ hoặc banner lỗi)
-    ├── 10418430002.jpg  ← ❌ CŨ: có thể sai
-    └── 10418430003.jpg  ← ❌ CŨ: có thể sai
+    ├── 10418430001.jpg  ← Cũ (có thể sai)
+    ├── 10418430002.jpg  ← Cũ
+    └── 10418430003.jpg  ← Cũ
 ```
 
-### Sau khi chạy --force
+## Sau khi chạy `--force`
 
 ```
 /upfile/1041/8430/
-├── 10418430001.jpg      ← ✅ CẬP NHẬT: banner only (branch_no=1)
-├── 10418430002.jpg      ← KHÔNG ĐỔI
-├── 10418430003.jpg      ← KHÔNG ĐỔI
+├── 10418430001.jpg      ← ✅ OVERLAY: banner (từ original cũ)
+├── 10418430002.jpg      ← Không đổi
+├── 10418430003.jpg      ← Không đổi
 ├── .backup/
-│   ├── 10418430001.jpg  ← KHÔNG ĐỔI
-│   ├── 10418430002.jpg  ← KHÔNG ĐỔI
-│   └── 10418430003.jpg  ← KHÔNG ĐỔI
+│   ├── 10418430001.jpg  ← Không đổi (bảo toàn)
+│   ├── 10418430002.jpg  ← Không đổi
+│   └── 10418430003.jpg  ← Không đổi
 └── .detect/
-    ├── 10418430001.jpg  ← ✅ MỚI: mask + banner (branch_no=1)
-    ├── 10418430002.jpg  ← ✅ MỚI: mask ONLY (branch_no=2)
-    └── 10418430003.jpg  ← ✅ MỚI: mask ONLY (branch_no=3)
+    ├── 10418430001.jpg  ← ✅ MỚI: mask + banner (từ backup)
+    ├── 10418430002.jpg  ← ✅ MỚI: mask ONLY (từ backup)
+    └── 10418430003.jpg  ← ✅ MỚI: mask ONLY (từ backup)
+```
+
+## Sau khi chạy `--force-overlay`
+
+```
+/upfile/1041/8430/
+├── 10418430001.jpg      ← ✅ OVERLAY: banner (từ original cũ)
+├── 10418430002.jpg      ← Không đổi (skip vì branch_no≠1)
+├── 10418430003.jpg      ← Không đổi (skip vì branch_no≠1)
+├── .backup/
+│   └── ...              ← Tạo mới nếu chưa có
+└── .detect/
+    └── ...              ← KHÔNG THAY ĐỔI (--force-overlay không tạo .detect/)
 ```
 
 ---
 
-## Important Notes
+# Quy tắc quan trọng
 
-### ⚠️ Quy tắc TUYỆT ĐỐI
+## ⚠️ QUY TẮC TUYỆT ĐỐI
 
-1. **Banner trên `branch_no != 1` là CẤM TUYỆT ĐỐI**
-   - Chỉ ảnh đầu tiên (branch_no=1) mới được phép có banner
-   - Các ảnh còn lại chỉ được mask, KHÔNG có banner
+1. **Banner trên `branch_no ≠ 1` là CẤM TUYỆT ĐỐI**
+   - Chỉ ảnh đầu tiên (`branch_no=1`) mới được phép có banner
+   - Các ảnh còn lại: mask only, KHÔNG banner
 
-2. **`--force` xử lý cả `.detect/` và original (cho branch_no=1)**
-   - `.detect/`: tái tạo với mask + banner (branch_no=1) hoặc mask only (branch_no!=1)
-   - Original: ghi đè với banner-only cho branch_no=1, không đổi cho các ảnh khác
+2. **Backup là BẮT BUỘC**
+   - Cả `--force` và `--force-overlay` đều tự động tạo backup nếu chưa có
+   - Backup được bảo toàn, không bao giờ ghi đè
 
-3. **Input luôn từ .backup**
-   - Đảm bảo detection từ ảnh sạch
-   - Nếu không có .backup → dùng original (có warning)
+3. **Overlay banner dùng ORIGINAL HIỆN TẠI**
+   - Không dùng backup để overlay
+   - Overlay lên trạng thái hiện tại của ảnh
 
-### 🔄 Khi nào KHÔNG nên dùng --force
-
-| Trường hợp                  | Lý do                   | Giải pháp                     |
-| --------------------------- | ----------------------- | ----------------------------- |
-| Muốn restore về ảnh gốc     | `--force` không restore | Dùng `restore_from_backup.py` |
-| File mới chưa có `.detect/` | Không cần force         | Chạy normal mode              |
+4. **`.detect/` dùng BACKUP làm input**
+   - Backup là ảnh sạch → detection chính xác
+   - Không dùng original (có thể đã có banner)
 
 ---
 
-## Related Scripts
+# Khi nào dùng flag nào?
 
-| Script                   | Mục đích            | Liên quan đến --force                     |
-| ------------------------ | ------------------- | ----------------------------------------- |
-| `fetch_today_images.py`  | Main processing     | Chứa --force flag                         |
-| `restore_from_backup.py` | Restore từ backup   | Dùng trước --force nếu cần reset original |
-| `process_image_v2.py`    | Detection & masking | Được gọi bởi --force                      |
+| Trường hợp | Dùng |
+| ---------- | ---- |
+| Cần tái tạo `.detect/` + overlay banner | `--force` |
+| Chỉ cần thêm/cập nhật banner, không cần `.detect/` | `--force-overlay` |
+| Xử lý ảnh mới | Normal mode (không cần flag) |
+| Restore về ảnh gốc | `restore_from_backup.py` |
 
 ---
 
-## Changelog
+# Scripts liên quan
 
-| Date       | Version | Description                                                  |
-| ---------- | ------- | ------------------------------------------------------------ |
-| 2026-02-03 | 1.1     | `--force` giờ cũng tạo banner-only cho original (branch_no=1) |
-| 2026-02-03 | 1.0     | Initial documentation                                        |
+| Script | Mục đích |
+| ------ | -------- |
+| `fetch_today_images.py` | Main processing script |
+| `restore_from_backup.py` | Restore original từ backup |
+| `process_image_v2.py` | Detection & masking logic |
+
+---
+
+# Changelog
+
+| Date | Version | Description |
+| ---- | ------- | ----------- |
+| 2026-02-04 | 2.0 | Cập nhật documentation đầy đủ cho --force và --force-overlay |
+| 2026-02-04 | 1.3 | --force-overlay tạo backup bắt buộc |
+| 2026-02-04 | 1.2 | --force overlay dùng original hiện tại |
+| 2026-02-03 | 1.1 | --force tự động tạo backup |
+| 2026-02-03 | 1.0 | Initial documentation |
