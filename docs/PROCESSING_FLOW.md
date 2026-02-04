@@ -189,7 +189,23 @@ Nếu cả 2 biến được set và có ảnh được xử lý, sẽ gửi sum
 
 ---
 
-## Tracking File Design
+## Tracking File Design (State-based)
+
+### Status Flow
+
+```
+pending → processing → verified → done
+              ↓
+            error
+```
+
+| Status | Mô tả |
+| ------ | ----- |
+| `pending` | File đã nhận diện từ DB, chờ xử lý |
+| `processing` | Đang xử lý |
+| `verified` | Đã xử lý và verify output file tồn tại |
+| `done` | Hoàn thành (toàn bộ xe đã verified) |
+| `error` | Lỗi xảy ra |
 
 ### File Location
 ```
@@ -206,31 +222,56 @@ Ví dụ: `logs/tracking/processed_20260203.json`
   "processed": {
     "12345": {
       "file_id": 12345,
+      "car_id": "10418430",
       "path": "/upfile/1041/8430/10418430001.jpg",
       "branch_no": 1,
-      "processed_at": "2026-02-03 10:30:00",
-      "status": "success",
+      "is_first": true,
+      "status": "done",
+      "status_history": [
+        {"status": "pending", "at": "2026-02-03 10:30:00"},
+        {"status": "processing", "at": "2026-02-03 10:30:01"},
+        {"status": "verified", "at": "2026-02-03 10:30:05"},
+        {"status": "done", "at": "2026-02-03 10:30:06"}
+      ],
       "detections": 2,
-      "is_first": true
+      "output_paths": {
+        "detect": "/upfile/1041/8430/.detect/10418430001.jpg",
+        "original": "/upfile/1041/8430/10418430001.jpg"
+      },
+      "completed_at": "2026-02-03 10:30:06"
     },
     "12346": {
       "file_id": 12346,
+      "car_id": "10418430",
       "path": "/upfile/1041/8430/10418430002.jpg",
       "branch_no": 2,
-      "processed_at": "2026-02-03 10:30:05",
-      "status": "success",
+      "is_first": false,
+      "status": "done",
+      "status_history": [
+        {"status": "pending", "at": "2026-02-03 10:30:00"},
+        {"status": "processing", "at": "2026-02-03 10:30:07"},
+        {"status": "verified", "at": "2026-02-03 10:30:10"},
+        {"status": "done", "at": "2026-02-03 10:30:11"}
+      ],
       "detections": 1,
-      "is_first": false
+      "output_paths": {
+        "detect": "/upfile/1041/8430/.detect/10418430002.jpg"
+      },
+      "completed_at": "2026-02-03 10:30:11"
     },
     "12347": {
       "file_id": 12347,
+      "car_id": "10418430",
       "path": "/upfile/1041/8430/10418430003.jpg",
       "branch_no": 3,
-      "processed_at": "2026-02-03 10:30:10",
-      "status": "error",
-      "detections": 0,
       "is_first": false,
-      "error": "file_not_found"
+      "status": "error",
+      "status_history": [
+        {"status": "pending", "at": "2026-02-03 10:30:00"},
+        {"status": "processing", "at": "2026-02-03 10:30:12"},
+        {"status": "error", "at": "2026-02-03 10:30:13"}
+      ],
+      "error": "output_missing: ['/upfile/1041/8430/.detect/10418430003.jpg']"
     }
   }
 }
@@ -247,39 +288,58 @@ Ví dụ: `logs/tracking/processed_20260203.json`
 
 ### Record Fields
 
-| Field          | Type     | Required | Description                                            | Used by Restore                        |
-| -------------- | -------- | -------- | ------------------------------------------------------ | -------------------------------------- |
-| `file_id`      | int      | Yes      | ID trong database                                      | No                                     |
-| `path`         | string   | Yes      | Đường dẫn relative (e.g., `/upfile/1041/8430/xxx.jpg`) | **YES** - để xác định file cần restore |
-| `branch_no`    | int/null | Yes      | Số thứ tự ảnh trong xe                                 | No (debug only)                        |
-| `processed_at` | string   | Yes      | Thời gian xử lý                                        | No                                     |
-| `status`       | string   | Yes      | `success` / `error` / `skip`                           | **YES** - để filter                    |
-| `detections`   | int      | No       | Số biển số phát hiện                                   | No                                     |
-| `is_first`     | bool     | Yes      | Có phải ảnh đầu tiên không                             | No                                     |
-| `error`        | string   | No       | Lý do lỗi (nếu status=error)                           | No                                     |
+| Field            | Type     | Required | Description                                            |
+| ---------------- | -------- | -------- | ------------------------------------------------------ |
+| `file_id`        | int      | Yes      | ID trong database                                      |
+| `car_id`         | string   | Yes      | ID xe                                                  |
+| `path`           | string   | Yes      | Đường dẫn relative (e.g., `/upfile/1041/8430/xxx.jpg`) |
+| `branch_no`      | int/null | Yes      | Số thứ tự ảnh trong xe                                 |
+| `is_first`       | bool     | Yes      | Có phải ảnh đầu tiên không                             |
+| `status`         | string   | Yes      | `pending` / `processing` / `verified` / `done` / `error` |
+| `status_history` | array    | Yes      | Lịch sử chuyển đổi trạng thái                          |
+| `detections`     | int      | No       | Số biển số phát hiện                                   |
+| `output_paths`   | object   | No       | Đường dẫn output files                                 |
+| `completed_at`   | string   | No       | Thời gian hoàn thành (khi status=done)                 |
+| `error`          | string   | No       | Lý do lỗi (nếu status=error)                           |
+
+### Processing Flow
+
+```
+1. DB lấy danh sách files
+2. Mỗi file:
+   a. Mark pending (nếu chưa có trong tracking)
+   b. Mark processing (bắt đầu xử lý)
+   c. Xử lý (backup_and_process)
+   d. Verify output files tồn tại
+   e. Mark verified (nếu output OK) hoặc error (nếu thiếu)
+3. Sau khi xử lý hết xe:
+   a. Nếu TẤT CẢ files của xe đã verified → Mark done
+   b. Nếu có file error → giữ nguyên trạng thái
+```
 
 ### Restore Script Usage
 
 `restore_from_backup.py` sử dụng tracking file để:
 
 1. **Lấy danh sách files cần restore** từ `processed` object
-2. **Filter theo status**: `--status success` / `--status error` / `--status all`
+2. **Filter theo status**: `--status done` / `--status error` / `--status all`
 3. **Filter theo car_id**: Extract từ `path` field
 4. **Xác định backup path**: Từ `path` field → tính ra `.backup/` location
 
 ```python
-# Restore script chỉ dùng 2 fields:
+# Restore script dùng các fields:
 path = record.get("path", "")      # Required
-status = record.get("status", "")  # Optional filter
+status = record.get("status", "")  # Filter (done/error/verified)
 ```
 
 ### Rules
 
 1. **Mỗi ngày có 1 tracking file riêng** - không ghi đè ngày khác
 2. **file_id là unique key** - mỗi file chỉ có 1 record
-3. **Không xóa records** - chỉ thêm mới hoặc update
-4. **path field là critical** - restore script phụ thuộc vào field này
-5. **last_processed_time** - dùng cho incremental DB fetch, giảm load
+3. **Status history được giữ lại** - để debug và audit
+4. **Chỉ mark done khi TẤT CẢ files của xe đã verified**
+5. **output_paths được lưu** - để verify lại nếu cần
+6. **last_processed_time** - dùng cho incremental DB fetch, giảm load
 
 ---
 

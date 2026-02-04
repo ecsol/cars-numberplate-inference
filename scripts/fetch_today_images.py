@@ -23,7 +23,7 @@ Usage:
     python fetch_today_images.py --limit 50        # 最大50件処理
     python fetch_today_images.py --days-ago 7 --limit 100
     python fetch_today_images.py --path /1554913G  # 特定フォルダを直接処理
-    python fetch_today_images.py --force           # .detect/強制再作成（branch_no=1のみ）
+    python fetch_today_images.py --force           # .detect/ + original強制再作成
     python fetch_today_images.py --force-overlay   # 元画像に強制バナー（branch_no=1のみ）
 
 crontab: * * * * * /path/to/venv/bin/python /path/to/fetch_today_images.py
@@ -309,12 +309,32 @@ LOG_RETENTION_DAYS = int(os.getenv("LOG_RETENTION_DAYS", "60"))
 # ======================
 # トラッキング
 # ======================
+# ステータス定義:
+#   pending    - DBから取得、処理待ち
+#   processing - 処理中
+#   verified   - 出力ファイル確認済み
+#   done       - 完了（成功）
+#   error      - エラー発生
+TRACKING_STATUS = {
+    "pending": "pending",
+    "processing": "processing",
+    "verified": "verified",
+    "done": "done",
+    "error": "error",
+}
+
+
 class ProcessingTracker:
     """
-    処理済みファイルのトラッキング
+    処理済みファイルのトラッキング（状態管理付き）
 
     日付ごとにJSONファイルで管理:
     {PROJECT_DIR}/logs/tracking/processed_20260130.json
+
+    ステータスフロー:
+        pending → processing → verified → done
+                      ↓
+                    error
 
     形式:
     {
@@ -323,10 +343,19 @@ class ProcessingTracker:
             "12345": {
                 "file_id": 12345,
                 "path": "/upfile/1007/4856/xxx.jpg",
-                "processed_at": "2026-01-30 12:34:56",
-                "status": "success",
+                "status": "done",
+                "status_history": [
+                    {"status": "pending", "at": "2026-01-30 12:34:50"},
+                    {"status": "processing", "at": "2026-01-30 12:34:51"},
+                    {"status": "verified", "at": "2026-01-30 12:34:55"},
+                    {"status": "done", "at": "2026-01-30 12:34:56"}
+                ],
                 "detections": 1,
-                "is_first": true
+                "is_first": true,
+                "output_paths": {
+                    "detect": "/upfile/.../xxx.jpg",
+                    "original": "/upfile/.../xxx.jpg"  # branch_no=1のみ
+                }
             },
             ...
         }
@@ -379,15 +408,35 @@ class ProcessingTracker:
         except Exception as e:
             logger.error(f"トラッキングファイル保存失敗: {e}")
 
-    def is_processed(self, target_date: datetime.date, file_id: int) -> bool:
-        """ファイルが処理済みかどうか"""
+    def get_status(self, target_date: datetime.date, file_id: int) -> Optional[str]:
+        """ファイルの現在のステータスを取得"""
         data = self.load(target_date)
-        return str(file_id) in data["processed"]
+        record = data["processed"].get(str(file_id))
+        if record:
+            return record.get("status")
+        return None
 
-    def has_car_any_processed(
+    def is_done(self, target_date: datetime.date, file_id: int) -> bool:
+        """ファイルが完了済み（done）かどうか"""
+        status = self.get_status(target_date, file_id)
+        return status == TRACKING_STATUS["done"]
+
+    def is_processed(self, target_date: datetime.date, file_id: int) -> bool:
+        """ファイルが処理済み（done または verified）かどうか"""
+        status = self.get_status(target_date, file_id)
+        return status in [TRACKING_STATUS["done"], TRACKING_STATUS["verified"]]
+
+    def needs_processing(self, target_date: datetime.date, file_id: int) -> bool:
+        """ファイルが処理必要かどうか（pending, processing, または未登録）"""
+        status = self.get_status(target_date, file_id)
+        if status is None:
+            return True
+        return status in [TRACKING_STATUS["pending"], TRACKING_STATUS["processing"]]
+
+    def has_car_any_done(
         self, target_date: datetime.date, car_path_prefix: str
     ) -> bool:
-        """車両のいずれかのファイルが処理済みかどうか（パスパターンでチェック）
+        """車両のいずれかのファイルがdone状態かどうか（パスパターンでチェック）
 
         Args:
             car_path_prefix: 例 "/upfile/1041/8430/"
@@ -395,9 +444,163 @@ class ProcessingTracker:
         data = self.load(target_date)
         for record in data.get("processed", {}).values():
             path = record.get("path", "")
-            if path.startswith(car_path_prefix):
+            status = record.get("status", "")
+            if path.startswith(car_path_prefix) and status == TRACKING_STATUS["done"]:
                 return True
         return False
+
+    def has_car_all_done(
+        self, target_date: datetime.date, car_path_prefix: str
+    ) -> bool:
+        """車両の全ファイルがdone状態かどうか"""
+        data = self.load(target_date)
+        car_files = []
+        for record in data.get("processed", {}).values():
+            path = record.get("path", "")
+            if path.startswith(car_path_prefix):
+                car_files.append(record)
+
+        if not car_files:
+            return False
+
+        return all(r.get("status") == TRACKING_STATUS["done"] for r in car_files)
+
+    def _add_status_history(self, record: dict, new_status: str):
+        """ステータス履歴を追加"""
+        if "status_history" not in record:
+            record["status_history"] = []
+        record["status_history"].append({
+            "status": new_status,
+            "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
+    def mark_pending(
+        self,
+        target_date: datetime.date,
+        file_id: int,
+        path: str,
+        branch_no: Optional[int] = None,
+        car_id: Optional[str] = None,
+        is_first: bool = False,
+    ):
+        """ファイルをpending状態としてマーク"""
+        data = self.load(target_date)
+        file_key = str(file_id)
+
+        # 既存レコードがあればスキップ（再処理しない）
+        if file_key in data["processed"]:
+            return
+
+        record = {
+            "file_id": file_id,
+            "car_id": car_id,
+            "path": path,
+            "branch_no": branch_no,
+            "is_first": is_first,
+            "status": TRACKING_STATUS["pending"],
+            "status_history": [],
+        }
+        self._add_status_history(record, TRACKING_STATUS["pending"])
+
+        data["processed"][file_key] = record
+        self.save(target_date, data)
+
+    def mark_processing(self, target_date: datetime.date, file_id: int):
+        """ファイルをprocessing状態としてマーク"""
+        data = self.load(target_date)
+        file_key = str(file_id)
+
+        if file_key not in data["processed"]:
+            logger.warn(f"ファイル {file_id} がトラッキングに存在しません")
+            return
+
+        record = data["processed"][file_key]
+        record["status"] = TRACKING_STATUS["processing"]
+        self._add_status_history(record, TRACKING_STATUS["processing"])
+
+        self.save(target_date, data)
+
+    def mark_verified(
+        self,
+        target_date: datetime.date,
+        file_id: int,
+        detections: int = 0,
+        output_paths: Optional[dict] = None,
+    ):
+        """ファイルをverified状態としてマーク（出力確認済み）"""
+        data = self.load(target_date)
+        file_key = str(file_id)
+
+        if file_key not in data["processed"]:
+            logger.warn(f"ファイル {file_id} がトラッキングに存在しません")
+            return
+
+        record = data["processed"][file_key]
+        record["status"] = TRACKING_STATUS["verified"]
+        record["detections"] = detections
+        if output_paths:
+            record["output_paths"] = output_paths
+        self._add_status_history(record, TRACKING_STATUS["verified"])
+
+        self.save(target_date, data)
+
+    def mark_done(self, target_date: datetime.date, file_id: int):
+        """ファイルをdone状態としてマーク（完了）"""
+        data = self.load(target_date)
+        file_key = str(file_id)
+
+        if file_key not in data["processed"]:
+            logger.warn(f"ファイル {file_id} がトラッキングに存在しません")
+            return
+
+        record = data["processed"][file_key]
+        record["status"] = TRACKING_STATUS["done"]
+        record["completed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._add_status_history(record, TRACKING_STATUS["done"])
+
+        self.save(target_date, data)
+
+    def mark_error(
+        self,
+        target_date: datetime.date,
+        file_id: int,
+        error_reason: str,
+    ):
+        """ファイルをerror状態としてマーク"""
+        data = self.load(target_date)
+        file_key = str(file_id)
+
+        if file_key not in data["processed"]:
+            logger.warn(f"ファイル {file_id} がトラッキングに存在しません")
+            return
+
+        record = data["processed"][file_key]
+        record["status"] = TRACKING_STATUS["error"]
+        record["error"] = error_reason
+        self._add_status_history(record, TRACKING_STATUS["error"])
+
+        self.save(target_date, data)
+
+    def mark_car_done(self, target_date: datetime.date, car_path_prefix: str):
+        """車両の全ファイルをdone状態としてマーク"""
+        data = self.load(target_date)
+
+        for file_key, record in data["processed"].items():
+            path = record.get("path", "")
+            status = record.get("status", "")
+            if path.startswith(car_path_prefix) and status == TRACKING_STATUS["verified"]:
+                record["status"] = TRACKING_STATUS["done"]
+                record["completed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self._add_status_history(record, TRACKING_STATUS["done"])
+
+        self.save(target_date, data)
+
+    # Legacy method for backward compatibility
+    def has_car_any_processed(
+        self, target_date: datetime.date, car_path_prefix: str
+    ) -> bool:
+        """車両のいずれかのファイルが処理済みかどうか（後方互換性のため維持）"""
+        return self.has_car_any_done(target_date, car_path_prefix)
 
     def mark_processed(
         self,
@@ -411,7 +614,7 @@ class ProcessingTracker:
         car_id: Optional[str] = None,
         error_reason: Optional[str] = None,
     ):
-        """ファイルを処理済みとしてマーク"""
+        """ファイルを処理済みとしてマーク（後方互換性のため維持）"""
         data = self.load(target_date)
 
         record = {
@@ -438,8 +641,13 @@ class ProcessingTracker:
 
         stats = {
             "total": len(processed),
-            "success": 0,
+            "pending": 0,
+            "processing": 0,
+            "verified": 0,
+            "done": 0,
             "error": 0,
+            # Legacy compatibility
+            "success": 0,
             "skip": 0,
         }
 
@@ -447,6 +655,9 @@ class ProcessingTracker:
             status = record.get("status", "unknown")
             if status in stats:
                 stats[status] += 1
+            # Legacy: count 'done' as 'success' too
+            if status == "done":
+                stats["success"] += 1
 
         return stats
 
@@ -495,6 +706,86 @@ class ProcessingTracker:
 
 
 tracker = ProcessingTracker(LOG_DIR)
+
+
+# ======================
+# 出力ファイル検証
+# ======================
+def verify_output_exists(
+    file_path: str,
+    is_first_image: bool = False,
+) -> dict:
+    """
+    出力ファイルが存在するか検証
+
+    Args:
+        file_path: 元ファイルパス (例: /upfile/1041/8430/xxx.jpg)
+        is_first_image: 最初の画像かどうか
+
+    Returns:
+        dict: {
+            "verified": bool,
+            "detect_exists": bool,
+            "detect_path": str,
+            "original_exists": bool,  # is_first_imageの場合のみ
+            "original_path": str,
+            "missing": list  # 欠損ファイルリスト
+        }
+    """
+    full_path = os.path.join(S3_MOUNT, file_path.lstrip("/"))
+    file_name = os.path.basename(full_path)
+    dir_path = os.path.dirname(full_path)
+
+    result = {
+        "verified": False,
+        "detect_exists": False,
+        "detect_path": None,
+        "original_exists": False,
+        "original_path": full_path,
+        "missing": [],
+    }
+
+    # .detect/ ファイルチェック
+    detect_path = os.path.join(dir_path, ".detect", file_name)
+    result["detect_path"] = detect_path
+
+    if BACKUP_S3_BUCKET:
+        # S3の場合はboto3で確認
+        relative_path = file_path.lstrip("/")
+        dir_part = os.path.dirname(relative_path)
+        detect_s3_key = f"webroot/{dir_part}/.detect/{file_name}"
+        try:
+            result["detect_exists"] = s3_backup_exists(detect_s3_key)
+        except Exception:
+            result["detect_exists"] = False
+    else:
+        result["detect_exists"] = os.path.exists(detect_path)
+
+    if not result["detect_exists"]:
+        result["missing"].append(detect_path)
+
+    # First imageの場合はoriginalもチェック
+    if is_first_image:
+        if BACKUP_S3_BUCKET:
+            relative_path = file_path.lstrip("/")
+            original_s3_key = f"webroot/{relative_path}"
+            try:
+                result["original_exists"] = s3_backup_exists(original_s3_key)
+            except Exception:
+                result["original_exists"] = False
+        else:
+            result["original_exists"] = os.path.exists(full_path)
+
+        # originalは常に存在するはずなので、missing には追加しない
+        # （存在しない場合は別の問題）
+
+    # 全て存在すればverified
+    if is_first_image:
+        result["verified"] = result["detect_exists"] and result["original_exists"]
+    else:
+        result["verified"] = result["detect_exists"]
+
+    return result
 
 
 # ======================
@@ -593,7 +884,7 @@ def get_images_from_path(folder_path: str) -> list:
     #   2. inspresultdata_cd形式: 1555316G (英数字)
     # 両方のパターンで検索する
     like_pattern = f"/upfile/{folder_path}/%"
-    
+
     # inspresultdata_cdの場合はフォルダ名がそのままID
     # car_cdの場合はフォルダ名の最後の部分がID (例: 1041/9302 → 9302)
     folder_id = os.path.basename(folder_path)
@@ -890,22 +1181,26 @@ def backup_and_process(
             return result
 
         # ============================================================
-        # --force モード: .detect/ を強制再作成（既存ファイルを上書き）
+        # --force モード: .detect/ + original を強制再作成
         # ============================================================
         # 処理内容:
-        #   - branch_no=1: .detect/ にマスク+バナーで上書き
-        #   - branch_no!=1: .detect/ にマスクのみ（バナー【絶対禁止】）で上書き
+        #   - branch_no=1:
+        #     - .detect/ にマスク+バナーで上書き
+        #     - 元画像にバナーのみ（マスクなし）で上書き
+        #   - branch_no!=1:
+        #     - .detect/ にマスクのみ（バナー【絶対禁止】）で上書き
+        #     - 元画像は変更しない
         # 入力:
         #   - .backup から元画像を取得（検出精度のため）
         # 出力:
         #   - .detect/ に処理済み画像を保存
-        #   - 元画像は変更しない
+        #   - branch_no=1: 元画像にバナーのみ版を上書き
         # 用途:
         #   - 間違ってバナーが付いた.detect/ファイルを修正
+        #   - 元画像のバナーを再適用
         # 注意:
         #   - .detect/ は常にマスクあり
         #   - バナーは branch_no=1 のみ
-        #   - original にバナーのみは通常モードで処理
         # ============================================================
         if force:
             # .detect/ は常にマスクあり
@@ -958,9 +1253,39 @@ def backup_and_process(
                 logger.debug(
                     f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
                 )
+
+                # branch_no=1: 元ファイルにバナーのみ版を上書き
+                if is_first_image:
+                    logger.debug(
+                        f"--force: First file - 元ファイルにバナーのみ上書き"
+                    )
+                    with tempfile.NamedTemporaryFile(
+                        suffix=os.path.splitext(file_name)[1], delete=False
+                    ) as tmp:
+                        temp_banner_path = tmp.name
+
+                    process_image(
+                        input_path=temp_input_path,
+                        output_path=temp_banner_path,
+                        seg_model=seg_model,
+                        pose_model=pose_model,
+                        mask_image=mask_image,
+                        is_masking=False,  # マスクなし
+                        add_banner=True,  # バナーあり
+                    )
+                    # 元ファイルを上書き
+                    original_s3_key = f"webroot/{relative_path}"
+                    s3_upload_backup(temp_banner_path, original_s3_key)
+                    logger.debug(
+                        f"元ファイル上書き完了: s3://{BACKUP_S3_BUCKET}/{original_s3_key}"
+                    )
+                    os.unlink(temp_banner_path)
+
                 os.unlink(temp_input_path)
                 os.unlink(temp_detect_path)
                 detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
+                if is_first_image:
+                    original_output_path = f"s3://{BACKUP_S3_BUCKET}/{original_s3_key}"
             else:
                 # ローカルバックアップから入力
                 backup_path = (
@@ -987,10 +1312,28 @@ def backup_and_process(
                     add_banner=use_banner,  # branch_no=1のみバナー【それ以外は絶対禁止】
                 )
 
+                # branch_no=1: 元ファイルにバナーのみ版を上書き
+                if is_first_image:
+                    logger.debug(
+                        f"--force: First file - 元ファイルにバナーのみ上書き"
+                    )
+                    process_image(
+                        input_path=input_path,
+                        output_path=full_path,
+                        seg_model=seg_model,
+                        pose_model=pose_model,
+                        mask_image=mask_image,
+                        is_masking=False,  # マスクなし
+                        add_banner=True,  # バナーあり
+                    )
+                    logger.debug(f"元ファイル上書き完了: {full_path}")
+
             result["status"] = "success"
             result["output_path"] = detect_output_path
             result["is_first"] = is_first_image
             result["force"] = True
+            if is_first_image:
+                result["original_output"] = full_path  # First fileは元ファイルも更新
             logger.debug(f"--force完了: {detect_output_path}")
             return result
 
@@ -1271,7 +1614,7 @@ def main():
     parser.add_argument(
         "--force",
         action="store_true",
-        help=".detect/が存在しても強制的に再処理",
+        help=".detect/とoriginal(branch_no=1)を強制的に再処理",
     )
 
     args = parser.parse_args()
@@ -1400,11 +1743,21 @@ def main():
     logger.info(f"車両数: {total_cars}台 (処理予定: {cars_to_process}台)")
 
     # 処理カウンター
-    stats = {"success": 0, "skip_tracked": 0, "skip_other": 0, "error": 0}
+    stats = {
+        "success": 0,
+        "skip_tracked": 0,
+        "skip_other": 0,
+        "error": 0,
+        "verified": 0,
+        "pending": 0,
+    }
     processed_cars = 0  # 処理した車両数（limitはこれで判定）
 
     # 車両ごとの結果（Chatwork通知用）
     car_results = []  # [(car_id, success, error, detections), ...]
+
+    # トラッキングモードフラグ（--path/--force-overlayではトラッキングスキップ）
+    use_tracking = not args.path and not args.force_overlay
 
     # 各車両を処理
     for car_key, car_files in car_images.items():
@@ -1421,15 +1774,12 @@ def main():
         first_file_path = car_files[0]["path"]
         car_dir = os.path.dirname(first_file_path) + "/"  # /upfile/1041/8430/
 
-        # --path または --force-overlay モードではトラッキングチェックをスキップ（明示的な再処理）
-        if (
-            not args.path
-            and not args.force_overlay
-            and tracker.has_car_any_processed(target_date, car_dir)
-        ):
-            stats["skip_tracked"] += len(car_files)
-            logger.debug(f"車両スキップ（処理中）: {car_key} (フォルダ: {car_dir})")
-            continue
+        # --forceモードでない場合、全ファイルがdone状態ならスキップ
+        if use_tracking and not args.force:
+            if tracker.has_car_all_done(target_date, car_dir):
+                stats["skip_tracked"] += len(car_files)
+                logger.debug(f"車両スキップ（全完了）: {car_key} (フォルダ: {car_dir})")
+                continue
 
         logger.debug(f"車両処理開始: {car_key} ({len(car_files)}枚)")
 
@@ -1437,8 +1787,30 @@ def main():
         car_success = 0
         car_error = 0
         car_detections = 0
-        car_images = []  # 処理成功した画像のリスト [(branch_no, path), ...]
+        car_processed_files = []  # 処理成功した画像のリスト [(branch_no, path), ...]
+        car_verified_count = 0  # verified状態のファイル数
 
+        # ============================================================
+        # Phase 1: 全ファイルをpending状態として登録
+        # ============================================================
+        if use_tracking:
+            for file_info in car_files:
+                is_first = file_info["branch_no"] == 1
+                # 既にdone状態ならスキップ（--forceの場合は再処理）
+                if not args.force and tracker.is_done(target_date, file_info["id"]):
+                    continue
+                tracker.mark_pending(
+                    target_date=target_date,
+                    file_id=file_info["id"],
+                    path=file_info["path"],
+                    branch_no=file_info["branch_no"],
+                    car_id=car_key,
+                    is_first=is_first,
+                )
+
+        # ============================================================
+        # Phase 2: 各ファイルを処理
+        # ============================================================
         for idx, file_info in enumerate(car_files):
             file_id = file_info["id"]
 
@@ -1447,6 +1819,17 @@ def main():
             logger.debug(
                 f"branch_no={file_info['branch_no']} (type={type(file_info['branch_no']).__name__}), is_first={is_first}"
             )
+
+            # 既にdone状態ならスキップ（--forceの場合は再処理）
+            if use_tracking and not args.force:
+                if tracker.is_done(target_date, file_id):
+                    logger.debug(f"スキップ（done状態）: {file_info['path']}")
+                    stats["skip_tracked"] += 1
+                    continue
+
+            # processing状態にマーク
+            if use_tracking:
+                tracker.mark_processing(target_date, file_id)
 
             # 処理実行
             result = backup_and_process(
@@ -1462,31 +1845,62 @@ def main():
                 stats["success"] += 1
                 car_success += 1
                 car_detections += result.get("detections", 0)
-                # 処理成功した画像を記録
-                car_images.append((file_info["branch_no"] or 999, file_info["path"]))
 
-                # トラッキングに記録（--path/--force-overlayモードではスキップ）
-                if not args.path and not args.force_overlay:
-                    tracker.mark_processed(
-                        target_date=target_date,
-                        file_id=file_id,
-                        path=file_info["path"],
-                        status="success",
-                        detections=result.get("detections", 0),
-                        is_first=is_first,
-                        branch_no=file_info["branch_no"],
-                        car_id=car_key,
+                # ============================================================
+                # Phase 3: 出力ファイルを検証
+                # ============================================================
+                verify_result = verify_output_exists(
+                    file_path=file_info["path"],
+                    is_first_image=is_first,
+                )
+
+                if verify_result["verified"]:
+                    car_verified_count += 1
+                    stats["verified"] += 1
+
+                    # verified状態にマーク
+                    if use_tracking:
+                        output_paths = {
+                            "detect": verify_result["detect_path"],
+                        }
+                        if is_first:
+                            output_paths["original"] = verify_result["original_path"]
+
+                        tracker.mark_verified(
+                            target_date=target_date,
+                            file_id=file_id,
+                            detections=result.get("detections", 0),
+                            output_paths=output_paths,
+                        )
+
+                    # 処理成功した画像を記録
+                    car_processed_files.append(
+                        (file_info["branch_no"] or 999, file_info["path"])
                     )
 
-                logger.success(
-                    f"{file_info['path']} "
-                    f"(検出: {result.get('detections', 0)}, "
-                    f"バナー: {'あり' if is_first else 'なし'})"
-                )
+                    logger.success(
+                        f"{file_info['path']} "
+                        f"(検出: {result.get('detections', 0)}, "
+                        f"バナー: {'あり' if is_first else 'なし'}, "
+                        f"verified: ✓)"
+                    )
+                else:
+                    # 処理成功したが出力ファイルがない（エラー扱い）
+                    stats["error"] += 1
+                    car_error += 1
+                    if use_tracking:
+                        tracker.mark_error(
+                            target_date=target_date,
+                            file_id=file_id,
+                            error_reason=f"output_missing: {verify_result['missing']}",
+                        )
+                    logger.error(
+                        f"{file_info['path']} - 出力ファイル未検出: {verify_result['missing']}"
+                    )
 
             elif status == "skip":
                 # --force-overlay で branch_no != 1 の場合などスキップ
-                stats["skipped"] = stats.get("skipped", 0) + 1
+                stats["skip_other"] += 1
                 logger.debug(
                     f"スキップ: {file_info['path']} - {result.get('reason', 'skip')}"
                 )
@@ -1495,15 +1909,11 @@ def main():
                 stats["error"] += 1
                 car_error += 1
 
-                # エラーもトラッキングに記録（--path/--force-overlayモードではスキップ）
-                if not args.path and not args.force_overlay:
-                    tracker.mark_processed(
+                # エラー状態にマーク
+                if use_tracking:
+                    tracker.mark_error(
                         target_date=target_date,
                         file_id=file_id,
-                        path=file_info["path"],
-                        status="error",
-                        branch_no=file_info["branch_no"],
-                        car_id=car_key,
                         error_reason=result.get("reason", "unknown"),
                     )
 
@@ -1515,32 +1925,46 @@ def main():
                     f"スキップ: {file_info['path']} - {result.get('reason', '')}"
                 )
 
+        # ============================================================
+        # Phase 4: 車両の全ファイルがverifiedなら、doneに昇格
+        # ============================================================
+        if use_tracking and car_verified_count == len(car_files):
+            tracker.mark_car_done(target_date, car_dir)
+            logger.info(f"車両完了（全ファイルdone）: {car_key}")
+
         # 車両処理完了後、結果を記録（処理があった場合のみ）
         if car_success > 0 or car_error > 0:
             processed_cars += 1  # 車両カウント
             logger.info(
                 f"[{processed_cars}/{cars_to_process}台] {car_key}: "
-                f"{car_success}枚成功, {car_error}枚エラー, 検出{car_detections}件"
+                f"{car_success}枚成功, {car_error}枚エラー, "
+                f"検出{car_detections}件, verified: {car_verified_count}/{len(car_files)}"
             )
             # branch_noでソートしてから記録
-            car_images.sort(key=lambda x: x[0])
+            car_processed_files.sort(key=lambda x: x[0])
             car_results.append(
-                (car_key, car_success, car_error, car_detections, car_images)
+                (car_key, car_success, car_error, car_detections, car_processed_files)
             )
 
     # 最終統計
     logger.info("=" * 60)
     logger.info("処理完了")
     logger.info(f"  成功: {stats['success']}件")
+    logger.info(f"  verified: {stats['verified']}件")
     logger.info(f"  エラー: {stats['error']}件")
     logger.info(f"  スキップ（処理済み）: {stats['skip_tracked']}件")
     logger.info(f"  スキップ（その他）: {stats['skip_other']}件")
 
     # --path モードではトラッキング更新をスキップ
-    if not args.path:
+    if use_tracking:
         # 最終トラッキング統計
         final_stats = tracker.get_stats(target_date)
-        logger.info(f"トラッキング累計: {final_stats['total']}件処理済み")
+        logger.info(
+            f"トラッキング累計: {final_stats['total']}件 "
+            f"(pending: {final_stats['pending']}, processing: {final_stats['processing']}, "
+            f"verified: {final_stats['verified']}, done: {final_stats['done']}, "
+            f"error: {final_stats['error']})"
+        )
 
         # last_fetch_timeを更新（次回は新規ファイルのみ取得）
         tracker.set_last_processed_time(target_date, datetime.now())
