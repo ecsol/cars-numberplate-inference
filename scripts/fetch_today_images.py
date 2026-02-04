@@ -1872,22 +1872,10 @@ def main():
             f"(成功: {existing_stats['success']}, エラー: {existing_stats['error']})"
         )
 
-        # 最後のDB取得時刻を取得（増分取得でDB負荷軽減）
-        # --force / --force-overlay の場合は増分取得をスキップして全件取得
-        if args.force_overlay:
-            last_fetch_time = None
-            logger.info("--force-overlay: 全件取得モード")
-        elif args.force:
-            last_fetch_time = None
-            logger.info("--force: 全件取得モード（増分スキップ）")
-        else:
-            last_fetch_time = tracker.get_last_processed_time(target_date)
-            if last_fetch_time:
-                logger.info(
-                    f"増分取得: {last_fetch_time.strftime('%H:%M:%S')} 以降の新規ファイル"
-                )
-            else:
-                logger.info("初回実行: 全件取得")
+        # 常に全件取得し、トラッキングで処理済みをスキップする
+        # ※ 増分取得は未処理ファイルを見逃すため廃止
+        last_fetch_time = None
+        logger.info("全件取得モード（トラッキングで処理済みをスキップ）")
 
         # 画像を取得
         images = get_images_by_date(
