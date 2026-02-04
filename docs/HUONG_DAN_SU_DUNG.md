@@ -31,6 +31,7 @@ cd /home/ec2-user/plate-detection-service
 | `--date YYYY-MM-DD` | Xử lý ngày cụ thể | `--date 2026-02-01` |
 | `--limit N` | Giới hạn số xe xử lý | `--limit 50` |
 | `--path FOLDER` | Xử lý 1 folder cụ thể | `--path 1041/0765` |
+| `--order newest/oldest` | Thứ tự xử lý (mặc định: newest) | `--order oldest` |
 
 ### Logic Options (Thay đổi cách xử lý)
 
@@ -80,6 +81,16 @@ cd /home/ec2-user/plate-detection-service
 
 ```bash
 ./venv/bin/python scripts/fetch_today_images.py --force-overlay --limit 50
+```
+
+### 7. Xử lý ảnh cũ nhất trước
+
+```bash
+# Mặc định: newest (mới nhất trước)
+./venv/bin/python scripts/fetch_today_images.py --limit 50
+
+# Xử lý cũ nhất trước
+./venv/bin/python scripts/fetch_today_images.py --order oldest --limit 50
 ```
 
 ---

@@ -942,6 +942,7 @@ def get_images_by_date(
     target_date: datetime.date,
     last_fetch_time: Optional[datetime] = None,
     only_first: bool = False,
+    order: str = "newest",
 ) -> list:
     """
     指定日に作成/更新された画像を取得
@@ -950,6 +951,7 @@ def get_images_by_date(
         target_date: 対象日
         last_fetch_time: この時刻以降に作成/更新された画像のみ取得（増分取得でDB負荷軽減）
         only_first: Trueの場合、branch_no=1のみ取得（--force-overlay用）
+        order: 並び順 "newest"=新しい順, "oldest"=古い順
 
     Returns:
         list: [(id, car_cd, inspresultdata_cd, branch_no, save_file_name, created, modified), ...]
@@ -957,6 +959,9 @@ def get_images_by_date(
 
     # branch_no=1のみ取得する条件
     branch_condition = "AND branch_no = 1" if only_first else ""
+
+    # 並び順: newest=新しい順(DESC), oldest=古い順(ASC)
+    date_order = "DESC" if order == "newest" else "ASC"
 
     if last_fetch_time:
         # 増分取得: last_fetch_time以降の新規/更新ファイルのみ
@@ -977,6 +982,7 @@ def get_images_by_date(
               AND save_file_name != ''
               {branch_condition}
             ORDER BY 
+                GREATEST(created, modified) {date_order},
                 COALESCE(inspresultdata_cd, car_cd::text),
                 branch_no ASC
         """
@@ -999,6 +1005,7 @@ def get_images_by_date(
               AND save_file_name != ''
               {branch_condition}
             ORDER BY 
+                GREATEST(created, modified) {date_order},
                 COALESCE(inspresultdata_cd, car_cd::text),
                 branch_no ASC
         """
@@ -1784,12 +1791,19 @@ def main():
         action="store_true",
         help=".detect/とoriginal(branch_no=1)を強制的に再処理",
     )
+    parser.add_argument(
+        "--order",
+        type=str,
+        choices=["newest", "oldest"],
+        default="newest",
+        help="処理順序: newest=新しい順, oldest=古い順 [デフォルト: newest]",
+    )
 
     # 引数を解析（不正なオプションはエラー）
     args, unknown = parser.parse_known_args()
     if unknown:
         logger.error(f"不正なオプション: {unknown}")
-        logger.error("有効なオプション: --days-ago, --date, --limit, --path, --force, --force-overlay")
+        logger.error("有効なオプション: --days-ago, --date, --limit, --path, --force, --force-overlay, --order")
         return
 
     # 対象日を計算
@@ -1810,6 +1824,7 @@ def main():
     else:
         backup_location = "未設定（エラー）"
 
+    order_display = "新しい順" if args.order == "newest" else "古い順"
     logger.info("=" * 60)
     logger.info(f"バッチ処理開始 (Two-Stage)")
     if args.path:
@@ -1817,6 +1832,7 @@ def main():
     else:
         logger.info(f"  対象日: {target_date}")
     logger.info(f"  最大処理数: {args.limit}件")
+    logger.info(f"  処理順序: {order_display} (--order {args.order})")
     logger.info(f"  S3マウント: {S3_MOUNT}")
     logger.info(f"  バックアップ: {backup_location}")
     logger.info(f"  Segモデル: {SEG_MODEL_PATH}")
@@ -1878,6 +1894,7 @@ def main():
             target_date=target_date,
             last_fetch_time=last_fetch_time,
             only_first=args.force_overlay,  # --force-overlayの場合はbranch_no=1のみ
+            order=args.order,  # newest=新しい順, oldest=古い順
         )
 
         if not images:
