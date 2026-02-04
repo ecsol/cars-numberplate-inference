@@ -11,6 +11,46 @@ Script `fetch_today_images.py` có 2 flag đặc biệt để xử lý lại ả
 
 ---
 
+## Skip Detection (branch_no đặc biệt)
+
+Một số `branch_no` sẽ **bỏ qua detection/masking** vì không phải ảnh xe:
+
+| branch_no | Tên | Xử lý |
+| --------- | --- | ----- |
+| **30** | メーターパネル (Meter Panel) | Skip detection |
+| **31** | コーションプレート (Caution Plate) | Skip detection |
+| **32** | 車検証 (Vehicle Inspection Certificate) | Skip detection |
+
+### Quy tắc cho branch_no 30, 31, 32:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│           SKIP DETECTION (branch_no = 30, 31, 32)                │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                   │
+│  ✅ Copy original → .backup/    (bình thường)                    │
+│  ✅ Copy original → .detect/    (bình thường)                    │
+│  ❌ KHÔNG detection              (skip model)                     │
+│  ❌ KHÔNG masking                (không che biển số)              │
+│  ❌ KHÔNG banner                 (không áp dụng)                  │
+│                                                                   │
+│  Lý do: Đây không phải ảnh xe, không có biển số cần che          │
+│                                                                   │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### So sánh với branch_no thông thường:
+
+| Bước | branch_no thường | branch_no 30, 31, 32 |
+| ---- | ---------------- | -------------------- |
+| Copy → `.backup/` | ✅ Có | ✅ Có |
+| Copy → `.detect/` | ✅ Có (qua model) | ✅ Có (copy trực tiếp) |
+| Detection | ✅ Có | ❌ Skip |
+| Masking | ✅ Có | ❌ Skip |
+| Banner | ✅ (branch_no=1 only) | ❌ N/A |
+
+---
+
 ## So sánh chi tiết
 
 | Đặc điểm | Normal Mode | `--force` | `--force-overlay` |
@@ -203,6 +243,11 @@ python fetch_today_images.py --force-overlay --limit 50
    - Backup là ảnh sạch → detection chính xác
    - Không dùng original (có thể đã có banner)
 
+5. **branch_no 30, 31, 32 SKIP DETECTION**
+   - Các ảnh này không phải ảnh xe (meter, caution plate, 車検証)
+   - Copy vào `.backup/` và `.detect/` bình thường
+   - KHÔNG chạy qua model detection/masking
+
 ---
 
 # Khi nào dùng flag nào?
@@ -230,6 +275,7 @@ python fetch_today_images.py --force-overlay --limit 50
 
 | Date | Version | Description |
 | ---- | ------- | ----------- |
+| 2026-02-04 | 2.1 | Thêm Skip Detection cho branch_no 30, 31, 32 (メーターパネル, コーションプレート, 車検証) |
 | 2026-02-04 | 2.0 | Cập nhật documentation đầy đủ cho --force và --force-overlay |
 | 2026-02-04 | 1.3 | --force-overlay tạo backup bắt buộc |
 | 2026-02-04 | 1.2 | --force overlay dùng original hiện tại |
