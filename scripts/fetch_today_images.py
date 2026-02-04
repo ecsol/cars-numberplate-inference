@@ -1565,17 +1565,29 @@ def backup_and_process(
             )
 
             # First fileのみ: 元ファイルにバナーのみ版を上書き
+            # ※ S3の場合は直接書き込みではなく、boto3でアップロード
             if is_first_image:
                 logger.debug(f"First file: 元ファイルにバナーのみ版を上書き")
+                with tempfile.NamedTemporaryFile(
+                    suffix=os.path.splitext(file_name)[1], delete=False
+                ) as tmp:
+                    temp_banner_path = tmp.name
+
                 process_image(
                     input_path=temp_input_path,
-                    output_path=full_path,
+                    output_path=temp_banner_path,
                     seg_model=seg_model,
                     pose_model=pose_model,
                     mask_image=mask_image,
                     is_masking=False,  # マスクなし
                     add_banner=True,  # バナーあり
                 )
+
+                # boto3でS3にアップロード
+                original_s3_key = f"webroot/{relative_path}"
+                s3_upload_backup(temp_banner_path, original_s3_key)
+                logger.debug(f"元ファイル上書き完了: s3://{BACKUP_S3_BUCKET}/{original_s3_key}")
+                os.unlink(temp_banner_path)
 
             # 一時ファイル削除
             os.unlink(temp_input_path)
