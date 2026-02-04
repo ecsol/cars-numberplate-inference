@@ -1274,18 +1274,28 @@ def backup_and_process(
                     f".detect/アップロード完了: s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
                 )
 
-                # branch_no=1: 元ファイルにバナーのみ版を上書き
+                # 一時ファイル削除（.detect/処理完了）
+                os.unlink(temp_input_path)
+                os.unlink(temp_detect_path)
+
+                # branch_no=1: 元ファイルにバナーのみ版を上書き（最後に実行）
+                # ※ 現在のoriginal画像を使用（backupではない）
                 if is_first_image:
                     logger.debug(
-                        f"--force: First file - 元ファイルにバナーのみ上書き"
+                        f"--force: First file - 元ファイル(現在)にバナーのみ上書き"
                     )
                     with tempfile.NamedTemporaryFile(
                         suffix=os.path.splitext(file_name)[1], delete=False
                     ) as tmp:
                         temp_banner_path = tmp.name
 
+                    # 現在のoriginal画像をダウンロード
+                    original_s3_key = f"webroot/{relative_path}"
+                    s3_download_backup(original_s3_key, temp_banner_path)
+
+                    # バナーを追加して上書き
                     process_image(
-                        input_path=temp_input_path,
+                        input_path=temp_banner_path,
                         output_path=temp_banner_path,
                         seg_model=seg_model,
                         pose_model=pose_model,
@@ -1293,16 +1303,13 @@ def backup_and_process(
                         is_masking=False,  # マスクなし
                         add_banner=True,  # バナーあり
                     )
+
                     # 元ファイルを上書き
-                    original_s3_key = f"webroot/{relative_path}"
                     s3_upload_backup(temp_banner_path, original_s3_key)
                     logger.debug(
                         f"元ファイル上書き完了: s3://{BACKUP_S3_BUCKET}/{original_s3_key}"
                     )
                     os.unlink(temp_banner_path)
-
-                os.unlink(temp_input_path)
-                os.unlink(temp_detect_path)
                 detect_output_path = f"s3://{BACKUP_S3_BUCKET}/{detect_s3_key}"
                 if is_first_image:
                     original_output_path = f"s3://{BACKUP_S3_BUCKET}/{original_s3_key}"
@@ -1332,13 +1339,14 @@ def backup_and_process(
                     add_banner=use_banner,  # branch_no=1のみバナー【それ以外は絶対禁止】
                 )
 
-                # branch_no=1: 元ファイルにバナーのみ版を上書き
+                # branch_no=1: 元ファイルにバナーのみ版を上書き（最後に実行）
+                # ※ 現在のoriginal画像を使用（backupではない）
                 if is_first_image:
                     logger.debug(
-                        f"--force: First file - 元ファイルにバナーのみ上書き"
+                        f"--force: First file - 元ファイル(現在)にバナーのみ上書き"
                     )
                     process_image(
-                        input_path=input_path,
+                        input_path=full_path,  # 現在のoriginalを使用
                         output_path=full_path,
                         seg_model=seg_model,
                         pose_model=pose_model,
