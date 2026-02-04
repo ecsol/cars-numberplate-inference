@@ -24,7 +24,7 @@ Usage:
     python fetch_today_images.py --days-ago 7 --limit 100
     python fetch_today_images.py --path /1554913G  # 特定フォルダを直接処理
     python fetch_today_images.py --force           # .detect/ + original強制再作成
-    python fetch_today_images.py --force-overlay   # 元画像に強制バナー（branch_no=1のみ）
+    /home/ec2-user/plate-detection-service/venv/bin/python fetch_today_images.py --force-overlay   # 元画像に強制バナー（branch_no=1のみ）
 
 crontab: * * * * * /path/to/venv/bin/python /path/to/fetch_today_images.py
 """
@@ -1877,54 +1877,66 @@ def main():
                 # ============================================================
                 # Phase 3: 出力ファイルを検証
                 # ============================================================
-                verify_result = verify_output_exists(
-                    file_path=file_info["path"],
-                    is_first_image=is_first,
-                )
-
-                if verify_result["verified"]:
+                # --force-overlay は .detect/ を作成しないため、検証スキップ
+                if args.force_overlay:
                     car_verified_count += 1
                     stats["verified"] += 1
-
-                    # verified状態にマーク
-                    if use_tracking:
-                        output_paths = {
-                            "detect": verify_result["detect_path"],
-                        }
-                        if is_first:
-                            output_paths["original"] = verify_result["original_path"]
-
-                        tracker.mark_verified(
-                            target_date=target_date,
-                            file_id=file_id,
-                            detections=result.get("detections", 0),
-                            output_paths=output_paths,
-                        )
-
-                    # 処理成功した画像を記録
                     car_processed_files.append(
                         (file_info["branch_no"] or 999, file_info["path"])
                     )
-
                     logger.success(
                         f"{file_info['path']} "
-                        f"(検出: {result.get('detections', 0)}, "
-                        f"バナー: {'あり' if is_first else 'なし'}, "
-                        f"verified: ✓)"
+                        f"(--force-overlay: バナー追加完了)"
                     )
                 else:
-                    # 処理成功したが出力ファイルがない（エラー扱い）
-                    stats["error"] += 1
-                    car_error += 1
-                    if use_tracking:
-                        tracker.mark_error(
-                            target_date=target_date,
-                            file_id=file_id,
-                            error_reason=f"output_missing: {verify_result['missing']}",
-                        )
-                    logger.error(
-                        f"{file_info['path']} - 出力ファイル未検出: {verify_result['missing']}"
+                    verify_result = verify_output_exists(
+                        file_path=file_info["path"],
+                        is_first_image=is_first,
                     )
+
+                    if verify_result["verified"]:
+                        car_verified_count += 1
+                        stats["verified"] += 1
+
+                        # verified状態にマーク
+                        if use_tracking:
+                            output_paths = {
+                                "detect": verify_result["detect_path"],
+                            }
+                            if is_first:
+                                output_paths["original"] = verify_result["original_path"]
+
+                            tracker.mark_verified(
+                                target_date=target_date,
+                                file_id=file_id,
+                                detections=result.get("detections", 0),
+                                output_paths=output_paths,
+                            )
+
+                        # 処理成功した画像を記録
+                        car_processed_files.append(
+                            (file_info["branch_no"] or 999, file_info["path"])
+                        )
+
+                        logger.success(
+                            f"{file_info['path']} "
+                            f"(検出: {result.get('detections', 0)}, "
+                            f"バナー: {'あり' if is_first else 'なし'}, "
+                            f"verified: ✓)"
+                        )
+                    else:
+                        # 処理成功したが出力ファイルがない（エラー扱い）
+                        stats["error"] += 1
+                        car_error += 1
+                        if use_tracking:
+                            tracker.mark_error(
+                                target_date=target_date,
+                                file_id=file_id,
+                                error_reason=f"output_missing: {verify_result['missing']}",
+                            )
+                        logger.error(
+                            f"{file_info['path']} - 出力ファイル未検出: {verify_result['missing']}"
+                        )
 
             elif status == "skip":
                 # --force-overlay で branch_no != 1 の場合などスキップ
