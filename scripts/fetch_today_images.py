@@ -1157,18 +1157,19 @@ def backup_and_process(
 
     # 処理実行（Two-Stage: Seg + Pose）
     try:
-        # === --force-overlay モード: branch_no=1のみ元画像に直接バナー上書き ===
         # ============================================================
-        # --force-overlay モード: 元画像に直接バナーを上書き
+        # --force-overlay モード: 元画像にバナーのみ上書き
         # ============================================================
         # 処理内容:
         #   - branch_no=1 のみ: 元画像にバナーのみ（マスクなし）で上書き
         #   - branch_no!=1: スキップ（処理しない）
+        # 前提条件:
+        #   - .backup が存在しない場合は先に作成（必須）
         # 入力:
         #   - 現在の元画像（full_path）をそのまま使用
         # 出力:
         #   - 元画像を直接上書き
-        #   - .detect/ は作成しない
+        #   - .detect/ は作成しない、マスクなし
         # ============================================================
         if force_overlay:
             # branch_no=1 以外はスキップ
@@ -1179,6 +1180,29 @@ def backup_and_process(
                     "reason": "force_overlay_not_first",
                     "path": full_path,
                 }
+
+            # バックアップがなければ作成（必須）
+            if BACKUP_S3_BUCKET:
+                dir_part = os.path.dirname(relative_path)
+                backup_s3_key = f"webroot/{dir_part}/.backup/{file_name}"
+                try:
+                    if not s3_backup_exists(backup_s3_key):
+                        logger.debug(
+                            f"--force-overlay: バックアップ作成: s3://{BACKUP_S3_BUCKET}/{backup_s3_key}"
+                        )
+                        s3_upload_backup(full_path, backup_s3_key)
+                except Exception as e:
+                    logger.warn(f"--force-overlay: バックアップ作成失敗: {e}")
+            elif BACKUP_DIR:
+                backup_path = os.path.join(BACKUP_DIR, relative_path)
+                if not os.path.exists(backup_path):
+                    try:
+                        backup_dir = os.path.dirname(backup_path)
+                        os.makedirs(backup_dir, exist_ok=True)
+                        shutil.copy(full_path, backup_path)
+                        logger.debug(f"--force-overlay: バックアップ作成: {backup_path}")
+                    except Exception as e:
+                        logger.warn(f"--force-overlay: バックアップ作成失敗: {e}")
 
             logger.debug(
                 f"--force-overlay: 元画像にバナーのみ上書き (masking=False, banner=True)"
