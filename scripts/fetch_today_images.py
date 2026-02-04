@@ -1785,7 +1785,12 @@ def main():
         help=".detect/とoriginal(branch_no=1)を強制的に再処理",
     )
 
-    args = parser.parse_args()
+    # 引数を解析（不正なオプションはエラー）
+    args, unknown = parser.parse_known_args()
+    if unknown:
+        logger.error(f"不正なオプション: {unknown}")
+        logger.error("有効なオプション: --days-ago, --date, --limit, --path, --force, --force-overlay")
+        return
 
     # 対象日を計算
     if args.date:
@@ -1927,8 +1932,10 @@ def main():
     # 車両ごとの結果（Chatwork通知用）
     car_results = []  # [(car_id, success, error, detections), ...]
 
-    # トラッキングモードフラグ（--path/--force-overlayではトラッキングスキップ）
-    use_tracking = not args.path and not args.force_overlay
+    # トラッキングモードフラグ
+    # --force-overlayのみトラッキングスキップ（.detect/を作成しないため）
+    # --path, --limit, --days-ago, --date はフィルタのみ、ロジックに影響しない
+    use_tracking = not args.force_overlay
 
     # 各車両を処理
     for car_key, car_files in car_images.items():
