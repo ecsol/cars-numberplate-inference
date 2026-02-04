@@ -1835,10 +1835,13 @@ def main():
         )
 
         # 最後のDB取得時刻を取得（増分取得でDB負荷軽減）
-        # --force-overlay の場合は増分取得をスキップして全件取得
+        # --force / --force-overlay の場合は増分取得をスキップして全件取得
         if args.force_overlay:
             last_fetch_time = None
             logger.info("--force-overlay: 全件取得モード")
+        elif args.force:
+            last_fetch_time = None
+            logger.info("--force: 全件取得モード（増分スキップ）")
         else:
             last_fetch_time = tracker.get_last_processed_time(target_date)
             if last_fetch_time:
@@ -2002,6 +2005,7 @@ def main():
                 # Phase 3: 出力ファイルを検証
                 # ============================================================
                 # --force-overlay は .detect/ を作成しないため、検証スキップ
+                # skip_detection (branch_no 30,31,32) は直接コピーのため、検証スキップ
                 if args.force_overlay:
                     car_verified_count += 1
                     stats["verified"] += 1
@@ -2011,6 +2015,24 @@ def main():
                     logger.success(
                         f"{file_info['path']} "
                         f"(--force-overlay: バナー追加完了)"
+                    )
+                elif result.get("skip_detection"):
+                    # skip_detection: 直接コピーしたので検証不要
+                    car_verified_count += 1
+                    stats["verified"] += 1
+                    car_processed_files.append(
+                        (file_info["branch_no"] or 999, file_info["path"])
+                    )
+                    if use_tracking:
+                        tracker.mark_verified(
+                            target_date=target_date,
+                            file_id=file_id,
+                            detections=0,
+                            output_paths={"detect": result.get("output_path", "")},
+                        )
+                    logger.success(
+                        f"{file_info['path']} "
+                        f"(skip_detection: branch_no={result.get('branch_no')}, コピー完了)"
                     )
                 else:
                     verify_result = verify_output_exists(
