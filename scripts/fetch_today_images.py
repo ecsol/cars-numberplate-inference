@@ -2114,11 +2114,28 @@ def main():
                         )
 
             elif status == "skip":
-                # --force-overlay で branch_no != 1 の場合などスキップ
-                stats["skip_other"] += 1
-                logger.debug(
-                    f"スキップ: {file_info['path']} - {result.get('reason', 'skip')}"
-                )
+                reason = result.get("reason", "skip")
+
+                # .detect/が既に存在する場合は「処理済み」として扱う
+                if reason == "detect_exists":
+                    car_verified_count += 1
+                    stats["verified"] += 1
+                    if use_tracking:
+                        tracker.mark_verified(
+                            target_date=target_date,
+                            file_id=file_id,
+                            detections=0,
+                            output_paths={"detect": result.get("detect_path", "")},
+                        )
+                    logger.debug(
+                        f"スキップ（処理済み）: {file_info['path']} - .detect/既存"
+                    )
+                else:
+                    # --force-overlay で branch_no != 1 の場合などスキップ
+                    stats["skip_other"] += 1
+                    logger.debug(
+                        f"スキップ: {file_info['path']} - {reason}"
+                    )
 
             elif status == "error":
                 stats["error"] += 1
